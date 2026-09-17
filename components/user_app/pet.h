@@ -14,6 +14,11 @@ extern "C" {
 // the bunny obeys. One number, one rule a child can learn.
 #define PET_NEED_LOW 30.0f
 
+// One fly for every quarter of the PROPRE gauge that has been lost, so a full
+// gauge draws none and an empty one draws three. Flies start gathering well
+// before the notch: they are the early warning, the sad face is the alarm.
+#define PET_FLY_MAX  3
+
 typedef enum {
     MOOD_OK,
     MOOD_HUNGRY,
@@ -49,6 +54,7 @@ bool        pet_play(pet_t *p);
 bool        pet_wash(pet_t *p);
 pet_mood_t  pet_mood(const pet_t *p);
 const char *pet_stage_name(pet_stage_t stage);  // French, for the screen
+int         pet_flies(const pet_t *p);          // 0 to PET_FLY_MAX
 
 #ifdef __cplusplus
 }

@@ -145,6 +145,14 @@ pet_mood_t pet_mood(const pet_t *p)
     return p->clean < PET_NEED_LOW ? MOOD_DIRTY : MOOD_OK;
 }
 
+int pet_flies(const pet_t *p)
+{
+    const int n = (int) ((100.0f - p->clean) / (100.0f / (PET_FLY_MAX + 1)));
+    if (n < 0)            return 0;
+    if (n > PET_FLY_MAX)  return PET_FLY_MAX;
+    return n;
+}
+
 const char *pet_stage_name(pet_stage_t stage)
 {
     switch (stage) {
@@ -278,6 +286,22 @@ int main(void)
     pet_tick(&baby, 1.0f);
     pet_tick(&adult, 1.0f);
     assert(adult.hunger > baby.hunger);
+
+    // A fly arrives at each quarter lost: none at full, three at empty.
+    pet_init(&p);
+    p.clean = 100.0f; assert(pet_flies(&p) == 0);
+    p.clean =  76.0f; assert(pet_flies(&p) == 0);
+    p.clean =  74.0f; assert(pet_flies(&p) == 1);
+    p.clean =  51.0f; assert(pet_flies(&p) == 1);
+    p.clean =  49.0f; assert(pet_flies(&p) == 2);
+    p.clean =  26.0f; assert(pet_flies(&p) == 2);
+    p.clean =  24.0f; assert(pet_flies(&p) == 3);
+    p.clean =   0.0f; assert(pet_flies(&p) == 3);
+    // The count never leaves the range the screen has objects for.
+    for (float v = -10.0f; v <= 110.0f; v += 0.5f) {
+        p.clean = v;
+        assert(pet_flies(&p) >= 0 && pet_flies(&p) <= PET_FLY_MAX);
+    }
 
     // Every stage has a name for the screen.
     for (int s = 0; s < STAGE_COUNT; s++) assert(pet_stage_name((pet_stage_t) s)[0] != '\0');

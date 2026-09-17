@@ -39,6 +39,9 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define ICON_SCALE      4                      // 16x16 art becomes 64x64
 #define DROP_SCALE      2                      // water drops are smaller than that
 #define PROP_MAX        3                      // most props any one action needs
+#define FLY_MAX         PET_FLY_MAX            // the rule itself lives in pet.c
+#define FLY_SCATTER_MS  520
+#define PULSE_MS        800                    // half a breath, so 0.6 Hz in all
 #define ICON_PX_W       (ICON_W * ICON_SCALE)
 #define ICON_PX_H       (ICON_H * ICON_SCALE)
 
@@ -66,18 +69,24 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define NOTCH_W         2                      // a hairline across the band
 #define NOTCH_LEN       22                     // crosses the band, 5 px proud each side
 
-#define BTN_W           104                    // as large as the round screen allows
-#define BTN_H           70
-#define BTN_STEP        110                    // gap between button centres
-#define BTN_Y           150                    // low, to leave the bunny its room
+// Three buttons on an arc, not in a row. On a round screen the corners are
+// the scarce thing: a pill's far end cap is what reaches the bezel, and at
+// this radius the outer two have to ride higher to stay inside it.
+#define BTN_W           92
+#define BTN_H           76                     // room for a 64 px icon inside
+#define BTN_OUT_X       122                    // outer buttons, left and right
+#define BTN_OUT_Y       100
+#define BTN_MID_Y       152
 #define BTN_SHOW_MS     4000                   // how long they stay after a touch
 #define BTN_FADE_MS     180
 
 #define COL_FUR         0xF2E9D8
 #define COL_FOOD        0xFF9E3D
-#define COL_FUN         0x5AC8FA
-#define COL_TIDY        0x7ED957
+#define COL_FUN         0x7ED957               // green
+#define COL_TIDY        0x5AC8FA               // blue, to agree with the water it
+                                               // pours and the drops it shakes off
 #define COL_WATER       0x8FD8FF
+#define COL_FLY         0x8A8A90
 #define COL_ALERT       0xFF3B30               // a bar below its notch turns red
 #define COL_TRACK       0x1E1E1E
 #define COL_MARK        0xFFFFFF
@@ -99,14 +108,15 @@ struct Meter {
     const char *label;
     int16_t     label_x, label_y;
     pet_mood_t  mood;
-    icon_id_t   icon;
+    icon_id_t   icon;                       // what this need looks like as an object
     lv_obj_t   *arc;
+    bool        pulsing;
 };
 
 static Meter meters[] = {
-    { 190, 240, false, read_hunger, COL_FOOD, "FAIM",    -150, -104, MOOD_HUNGRY, ICON_CARROT, NULL },
-    { 246, 296, false, read_happy,  COL_FUN,  "BONHEUR",    0, -182, MOOD_BORED,  ICON_BALL,   NULL },
-    { 302, 352, true,  read_clean,  COL_TIDY, "PROPRE",   152,  -99, MOOD_DIRTY,  ICON_DROP,   NULL },
+    { 190, 240, false, read_hunger, COL_FOOD, "FAIM",    -150, -104, MOOD_HUNGRY, ICON_CARROT, NULL, false },
+    { 246, 296, false, read_happy,  COL_FUN,  "BONHEUR",    0, -182, MOOD_BORED,  ICON_BALL,   NULL, false },
+    { 302, 352, true,  read_clean,  COL_TIDY, "PROPRE",   152,  -99, MOOD_DIRTY,  ICON_DROP,   NULL, false },
 };
 #define METER_COUNT ((int) (sizeof(meters) / sizeof(meters[0])))
 
@@ -118,8 +128,10 @@ static pet_t          pet;
 static lv_image_dsc_t sprite_dsc[STAGE_COUNT][SPR_COUNT];
 static lv_image_dsc_t icon_dsc[ICON_COUNT];
 static lv_image_dsc_t drop_dsc[ICON_COUNT];             // the same art, drawn smaller
-static lv_obj_t      *pet_img, *want_img, *cheer_label;
+static lv_obj_t      *pet_img, *cheer_label;
 static lv_obj_t      *prop_img[PROP_MAX];               // carrot, ball, water
+static lv_obj_t      *fly_img[FLY_MAX];
+static int            shown_flies = -1;
 static lv_obj_t      *buttons[METER_COUNT];
 static bool           buttons_shown;
 static icon_id_t      shown_carrot;
@@ -133,7 +145,6 @@ static action_t       action_kind;
 static uint32_t       cheer_start;
 static sprite_id_t    shown_frame = SPR_COUNT;
 static pet_stage_t    shown_stage = STAGE_COUNT;
-static int            shown_icon  = -1;
 static float          since_save;
 static uint8_t        backlight = BRIGHT;
 
@@ -223,8 +234,9 @@ static void state_load(void)
     if (nvs_get_blob(nvs_h, "state", &saved, &len) == ESP_OK && len == sizeof(saved)
         && saved.stage < STAGE_COUNT && gauges_sane(&saved)) {
         pet = saved;
-        ESP_LOGI(TAG, "bunny is back: %s, age %u min, care %d min",
-                 pet_stage_name(pet.stage), (unsigned) pet.age_min, (int) pet.care_min);
+        ESP_LOGI(TAG, "bunny is back: %s, age %u min, care %d min, faim %d bonheur %d propre %d",
+                 pet_stage_name(pet.stage), (unsigned) pet.age_min, (int) pet.care_min,
+                 (int) pet.hunger, (int) pet.happy, (int) pet.clean);
     }
 }
 
@@ -389,6 +401,36 @@ static void props_for_action(action_t kind)
     }
 }
 
+// A gauge below its notch breathes instead of sitting still. One full breath
+// takes 1.6 seconds: slow enough to read as an animal asking, and far below
+// any rate that could trouble a sensitive child.
+static void set_arc_opa(void *obj, int32_t v)
+{
+    lv_obj_set_style_arc_opa((lv_obj_t *) obj, (lv_opa_t) v, LV_PART_INDICATOR);
+}
+
+static void pulse_set(int i, bool on)
+{
+    if (on == meters[i].pulsing) return;
+    meters[i].pulsing = on;
+
+    if (!on) {
+        lv_anim_delete(meters[i].arc, set_arc_opa);
+        lv_obj_set_style_arc_opa(meters[i].arc, LV_OPA_COVER, LV_PART_INDICATOR);
+        return;
+    }
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, meters[i].arc);
+    lv_anim_set_exec_cb(&a, set_arc_opa);
+    lv_anim_set_values(&a, LV_OPA_30, LV_OPA_COVER);
+    lv_anim_set_duration(&a, PULSE_MS);
+    lv_anim_set_reverse_duration(&a, PULSE_MS);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
+}
+
 static void set_opa(void *obj, int32_t v)
 {
     lv_obj_set_style_opa((lv_obj_t *) obj, (lv_opa_t) v, 0);
@@ -423,6 +465,79 @@ static void buttons_set(bool show)
     }
 }
 
+// Flies. A dirty bunny smells, and the smell is what a child can see: the
+// PROPRE gauge on its own is an abstraction, three flies circling is not.
+//
+// The count follows the gauge directly rather than the mood, because mood is
+// "the worst need wins". A bunny that is both hungry and filthy should still
+// have flies, even while its face is asking for a carrot.
+
+// Two drifts of different lengths, crossed, so no fly repeats the other's
+// path and none of them looks like it is on a rail.
+static void fly_wander(int i)
+{
+    static const int32_t  dx[FLY_MAX] = {  26, -22,  30 };
+    static const int32_t  dy[FLY_MAX] = { -18,  24,  20 };
+    static const uint32_t tx[FLY_MAX] = { 900, 1150, 780 };
+    static const uint32_t ty[FLY_MAX] = { 1300, 700, 1020 };
+
+    for (int axis = 0; axis < 2; axis++) {
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, fly_img[i]);
+        lv_anim_set_exec_cb(&a, axis ? set_lift : set_shift);
+        lv_anim_set_values(&a, 0, axis ? dy[i] : dx[i]);
+        lv_anim_set_duration(&a, axis ? ty[i] : tx[i]);
+        lv_anim_set_reverse_duration(&a, axis ? ty[i] : tx[i]);
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        lv_anim_start(&a);
+    }
+}
+
+static void fly_arrive(int i)
+{
+    lv_obj_set_style_translate_x(fly_img[i], 0, 0);
+    lv_obj_set_style_translate_y(fly_img[i], 0, 0);
+    lv_obj_set_style_opa(fly_img[i], LV_OPA_COVER, 0);
+    lv_obj_remove_flag(fly_img[i], LV_OBJ_FLAG_HIDDEN);
+    fly_wander(i);
+}
+
+// Washing sends them off upward. That flight is the reward for pressing LAVER.
+static void fly_scatter(int i)
+{
+    const int32_t y0 = lv_obj_get_style_translate_y(fly_img[i], LV_PART_MAIN);
+    lv_anim_delete(fly_img[i], set_shift);
+    lv_anim_delete(fly_img[i], set_lift);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, fly_img[i]);
+    lv_anim_set_exec_cb(&a, set_lift);
+    lv_anim_set_values(&a, y0, y0 - 180);
+    lv_anim_set_duration(&a, FLY_SCATTER_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_start(&a);
+
+    lv_anim_set_exec_cb(&a, set_opa);
+    lv_anim_set_values(&a, LV_OPA_COVER, 0);
+    lv_anim_set_completed_cb(&a, fade_done);
+    lv_anim_start(&a);
+}
+
+static void flies_set(int n)
+{
+    if (n == shown_flies) return;
+    const int had = shown_flies < 0 ? 0 : shown_flies;
+
+    for (int i = 0; i < FLY_MAX; i++) {
+        if (i < n && i >= had)      fly_arrive(i);
+        else if (i >= n && i < had) fly_scatter(i);
+    }
+    shown_flies = n;
+}
+
 static void cheer(const char *text)
 {
     lv_label_set_text(cheer_label, text);
@@ -444,6 +559,13 @@ static void screen_set_light(uint8_t level)
     if (level == OFF) lv_anim_delete(pet_img, set_lift);
     Lcd_SetBacklight(level);
     backlight = level;
+}
+
+// A press anywhere that is not a button asks for the buttons.
+static void screen_press_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    buttons_set(true);
 }
 
 static void action_cb(lv_event_t *e)
@@ -470,6 +592,7 @@ static void action_cb(lv_event_t *e)
     case ACT_WASH: start_shake(); break;
     }
     props_for_action(action_kind);
+    buttons_set(false);                         // let the bunny have the stage
 }
 
 // ---------------------------------------------------------------------------
@@ -525,22 +648,29 @@ static void make_label(const char *text, int16_t x, int16_t y, uint32_t colour)
     lv_obj_align(l, LV_ALIGN_CENTER, x, y);
 }
 
-static lv_obj_t *make_button(const char *text, int16_t x, int16_t y, intptr_t which)
+// A button carries the picture of the need it answers, in that need's colour.
+// The gauge breathes orange, the orange button has a carrot on it: a child who
+// cannot read a word can still follow that. No text survives on this screen.
+static lv_obj_t *make_button(const Meter *m, int16_t x, int16_t y, intptr_t which)
 {
     lv_obj_t *b = lv_button_create(lv_screen_active());
     lv_obj_set_size(b, BTN_W, BTN_H);
     lv_obj_align(b, LV_ALIGN_CENTER, x, y);
     lv_obj_set_style_radius(b, BTN_H / 2, 0);         // a full pill, so no sharp corner
                                                       // reaches the round edge
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x2A2A2E), 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x232327), 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(0x4A4A52), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(b, lv_color_hex(m->colour), 0);
+    lv_obj_set_style_border_width(b, 3, 0);
+    lv_obj_set_style_border_opa(b, LV_OPA_70, 0);
     lv_obj_add_event_cb(b, action_cb, LV_EVENT_CLICKED, (void *) which);
 
-    lv_obj_t *l = lv_label_create(b);
-    lv_label_set_text(l, text);
-    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
-    lv_obj_center(l);
+    lv_obj_t *pic = lv_image_create(b);
+    lv_image_set_src(pic, &icon_dsc[m->icon]);
+    lv_obj_set_style_image_recolor(pic, lv_color_hex(m->colour), 0);
+    lv_obj_set_style_image_recolor_opa(pic, LV_OPA_COVER, 0);
+    lv_obj_center(pic);
+    lv_obj_remove_flag(pic, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_set_style_opa(b, LV_OPA_TRANSP, 0);     // a touch brings them in
     lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
@@ -598,10 +728,17 @@ static void tick_cb(lv_timer_t *timer)
 
     uint32_t idle = lv_display_get_inactive_time(NULL);
     screen_set_light(idle > OFF_AFTER_MS ? OFF : (idle > DIM_AFTER_MS ? DIM : BRIGHT));
-    buttons_set(idle < BTN_SHOW_MS);
+    if (idle > BTN_SHOW_MS) buttons_set(false);
     if (backlight == OFF) {
-        action_start = 0;                       // nothing half-drawn survives the dark
+        // Nothing half-drawn survives the dark. Clearing action_start alone
+        // left the prop behind, because the only code that hides a prop sits
+        // behind that same flag: a carrot stranded on the belly until the
+        // next meal, whatever the bunny actually needed.
+        action_start = 0;
         cheer_start  = 0;
+        props_hide();
+        motion_stop();
+        lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
@@ -617,25 +754,15 @@ static void tick_cb(lv_timer_t *timer)
 
     for (int i = 0; i < METER_COUNT; i++) {
         const float value = meters[i].read(&pet);
+        const bool  low   = value < PET_NEED_LOW;
         lv_arc_set_value(meters[i].arc, (int32_t) value);
         lv_obj_set_style_arc_color(meters[i].arc,
-                                   lv_color_hex(value < PET_NEED_LOW ? COL_ALERT : meters[i].colour),
+                                   lv_color_hex(low ? COL_ALERT : meters[i].colour),
                                    LV_PART_INDICATOR);
+        pulse_set(i, low);
     }
 
-    // The bunny holds up a picture of the one thing it wants.
-    int want = -1;
-    for (int i = 0; i < METER_COUNT; i++)
-        if (meters[i].mood == mood) want = meters[i].icon;
-    if (want != shown_icon) {
-        if (want < 0) {
-            lv_obj_add_flag(want_img, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_image_set_src(want_img, &icon_dsc[want]);
-            lv_obj_remove_flag(want_img, LV_OBJ_FLAG_HIDDEN);
-        }
-        shown_icon = want;
-    }
+    flies_set(pet_flies(&pet));
 
     if (action_start && action_kind == ACT_FEED) {
         const uint32_t part = lv_tick_elaps(action_start) * 3 / action_ms;
@@ -680,6 +807,8 @@ void user_ui_init(void)
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(scr, screen_press_cb, LV_EVENT_PRESSED, NULL);
 
     if (!sprites_load()) return;                            // no PSRAM, no bunny
 
@@ -697,18 +826,23 @@ void user_ui_init(void)
     lv_obj_set_style_image_recolor(pet_img, lv_color_hex(COL_FUR), 0);
     lv_obj_set_style_image_recolor_opa(pet_img, LV_OPA_COVER, 0);
 
-    want_img = lv_image_create(scr);
-    lv_image_set_src(want_img, &icon_dsc[ICON_CARROT]);
-    lv_obj_align(want_img, LV_ALIGN_CENTER, 132, -108);   // clear of the wider body
-    lv_obj_set_style_image_recolor(want_img, lv_color_hex(COL_FOOD), 0);
-    lv_obj_set_style_image_recolor_opa(want_img, LV_OPA_COVER, 0);
-    lv_obj_add_flag(want_img, LV_OBJ_FLAG_HIDDEN);
-
+    // Props are made after the bunny, so the carrot sits on top of the fur.
     for (int i = 0; i < PROP_MAX; i++) {
         prop_img[i] = lv_image_create(scr);
         lv_image_set_src(prop_img[i], &icon_dsc[ICON_CARROT]);
         lv_obj_set_style_image_recolor_opa(prop_img[i], LV_OPA_COVER, 0);
         lv_obj_add_flag(prop_img[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Flies sit outside the body, where they read against the black.
+    static const lv_point_t fly_at[FLY_MAX] = { { -140, -20 }, { 140, -55 }, { -150, 60 } };
+    for (int i = 0; i < FLY_MAX; i++) {
+        fly_img[i] = lv_image_create(scr);
+        lv_image_set_src(fly_img[i], &drop_dsc[ICON_FLY]);
+        lv_obj_align(fly_img[i], LV_ALIGN_CENTER, fly_at[i].x, fly_at[i].y);
+        lv_obj_set_style_image_recolor(fly_img[i], lv_color_hex(COL_FLY), 0);
+        lv_obj_set_style_image_recolor_opa(fly_img[i], LV_OPA_COVER, 0);
+        lv_obj_add_flag(fly_img[i], LV_OBJ_FLAG_HIDDEN);
     }
 
     cheer_label = lv_label_create(scr);
@@ -722,12 +856,16 @@ void user_ui_init(void)
     lv_obj_align(cheer_label, LV_ALIGN_CENTER, 0, 40);
     lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
 
-    // Three buttons in a row across the bottom, hidden until a child touches
-    // the screen. The display is a 233 pixel circle, so the far end of each
-    // outer pill sits 212 from the middle and clears the edge.
-    buttons[0] = make_button("NOURRIR", -BTN_STEP, BTN_Y, 0);
-    buttons[1] = make_button("JOUER",            0, BTN_Y, 1);
-    buttons[2] = make_button("LAVER",     BTN_STEP, BTN_Y, 2);
+    // Hidden until a child touches the screen. The far end of the outer pills
+    // now reaches 202 of the 233 pixel radius, where the straight row reached
+    // 236 and was cut by the bezel. The meters are in the same order as the
+    // buttons, so each button takes its picture and its colour straight from
+    // the gauge it answers.
+    static const lv_point_t btn_at[METER_COUNT] = {
+        { -BTN_OUT_X, BTN_OUT_Y }, { 0, BTN_MID_Y }, { BTN_OUT_X, BTN_OUT_Y },
+    };
+    for (int i = 0; i < METER_COUNT; i++)
+        buttons[i] = make_button(&meters[i], btn_at[i].x, btn_at[i].y, i);
 
     start_bob();
     last_us = esp_timer_get_time();

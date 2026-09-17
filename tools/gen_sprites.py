@@ -142,8 +142,16 @@ def icon_drop():
         half = (y - 2) * 0.62
         hline(g, 7.5 - half, 7.5 + half, y, '#')
     return g
+def icon_fly():
+    g = blank(IW, IH)
+    ell(g, 3.8, 5.4, 3.1, 1.4)                           # wings, wide and flat
+    ell(g, 11.2, 5.4, 3.1, 1.4)
+    ell(g, 7.5, 9.0, 2.9, 3.2)                           # round body below them
+    return g
+
 ICONS = [('CARROT', icon_carrot()), ('CARROT_BITTEN', icon_carrot(10)),
-         ('CARROT_STUB', icon_carrot(7)), ('BALL', icon_ball()), ('DROP', icon_drop())]
+         ('CARROT_STUB', icon_carrot(7)), ('BALL', icon_ball()), ('DROP', icon_drop()),
+         ('FLY', icon_fly())]
 
 # --- emit --------------------------------------------------------------------
 out = ["""// Bunny sprites. One character per pixel: '#' is fur, '.' is background.

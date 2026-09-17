@@ -36,6 +36,15 @@ is only a body size and an ear size. The `STAGES` table at the top holds all
 three. Single pixels in `sprites.h` can still be edited by hand, but the
 generator overwrites them.
 
+## What the bunny shows you
+
+Nothing on screen asks a child to read. A low need puts its own face on the
+bunny and a picture of what it wants beside its head: a carrot, a ball, a drop
+of water. The same picture is on the button, so the game is a match. Flies
+gather when PROPRE falls past the notch, one more for every ten points below,
+and they scatter when you wash. The buttons stay out of the way until the
+screen is touched.
+
 ## Growth
 
 The bunny is a mammal, so it is born, not hatched: BEBE, JEUNE, ADULTE. It
@@ -64,3 +73,6 @@ divide the four rates by ten.
   set of drawing functions and a selector.
 - Death.
 - A tap game behind JOUER.
+- Running on a battery. The cell header works, but GPIO18 is the power latch
+  and this firmware never drives it, so the board drops as soon as the PWR
+  button is released. See the vendor's 04_BATT_PWR_Test.
