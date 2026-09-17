@@ -44,6 +44,8 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define PULSE_MS        800                    // half a breath, so 0.6 Hz in all
 #define HOLD_MS         5000                   // a deliberate press, not a brush
 #define HOLD_HINT_MS    900                    // silence before the ring appears
+#define HOLD_INSET      30                     // trim the sprite's empty corners out
+                                               // of the target
 #define CONFIRM_MS      7000                   // an unanswered question withdraws
 #define ICON_PX_W       (ICON_W * ICON_SCALE)
 #define ICON_PX_H       (ICON_H * ICON_SCALE)
@@ -140,6 +142,7 @@ static lv_obj_t      *confirm_box;
 static uint32_t       confirm_start;
 static lv_obj_t      *hold_ring;
 static uint32_t       press_start;
+static bool           hold_armed;              // this press landed on the rabbit
 static bool           buttons_shown;
 static icon_id_t      shown_carrot;
 static bool           pending_cheer;                    // the bunny grew while the
@@ -614,12 +617,29 @@ static void confirm_yes_cb(lv_event_t *e)
 static void hold_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    if (confirm_start) return;
+    if (confirm_start || !hold_armed) return;   // the rabbit, not the whole screen
     hold_ring_hide(NULL);
     buttons_set(false);
     lv_obj_remove_flag(confirm_box, LV_OBJ_FLAG_HIDDEN);
     confirm_start = lv_tick_get();
     if (!confirm_start) confirm_start = 1;
+}
+
+// Did this press land on the rabbit, or just somewhere on the glass? Asked
+// once, when the finger arrives, so that sliding off the rabbit part way
+// through a hold cannot change the answer either way.
+static bool press_on_pet(void)
+{
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev) return false;
+
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+
+    lv_area_t a;
+    lv_obj_get_coords(pet_img, &a);
+    return p.x >= a.x1 + HOLD_INSET && p.x <= a.x2 - HOLD_INSET
+        && p.y >= a.y1 + HOLD_INSET && p.y <= a.y2 - HOLD_INSET;
 }
 
 // A press anywhere that is not a button asks for the buttons.
@@ -628,6 +648,7 @@ static void screen_press_cb(lv_event_t *e)
     LV_UNUSED(e);
     press_start = lv_tick_get();
     if (!press_start) press_start = 1;
+    hold_armed = press_on_pet();
     buttons_set(true);
 }
 
@@ -637,13 +658,14 @@ static void hold_ring_hide(lv_event_t *e)
 {
     LV_UNUSED(e);
     press_start = 0;
+    hold_armed  = false;
     lv_obj_add_flag(hold_ring, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void pressing_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
-    if (!press_start || confirm_start) return;
+    if (!press_start || !hold_armed || confirm_start) return;
 
     const uint32_t held = lv_tick_elaps(press_start);
     if (held < HOLD_HINT_MS) return;
