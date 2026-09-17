@@ -245,7 +245,7 @@ static void state_load(void)
     if (nvs_get_blob(nvs_h, "state", &saved, &len) == ESP_OK && len == sizeof(saved)
         && saved.stage < STAGE_COUNT && gauges_sane(&saved)) {
         pet = saved;
-        ESP_LOGI(TAG, "bunny is back: %s, age %u min, %u deeds, faim %d bonheur %d propre %d",
+        ESP_LOGI(TAG, "bunny is back: %s, age %u min, %u deeds, food %d fun %d tidy %d",
                  pet_stage_name(pet.stage), (unsigned) pet.age_min, (unsigned) pet.deeds,
                  (int) pet.hunger, (int) pet.happy, (int) pet.clean);
     }
