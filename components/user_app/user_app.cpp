@@ -30,7 +30,10 @@ LcdTouchPanel touch_dev(i2c_dev, TOUCH_ADDR);
 LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 
 // ---------------------------------------------------------------------------
-#define SCALE           8                      // 32x32 art becomes 256x256
+// 9 leaves 24 px between the ear tips and the BONHEUR label, and 13 px
+// between the feet and the button row. 10 left about 5 px at each end, which
+// is not clearance, it is luck.
+#define SCALE           9                      // 32x32 art becomes 288x288
 #define IMG_W           (SPRITE_W * SCALE)
 #define IMG_H           (SPRITE_H * SCALE)
 #define ICON_SCALE      4                      // 16x16 art becomes 64x64
@@ -66,7 +69,9 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define BTN_W           104                    // as large as the round screen allows
 #define BTN_H           70
 #define BTN_STEP        110                    // gap between button centres
-#define BTN_Y           134
+#define BTN_Y           150                    // low, to leave the bunny its room
+#define BTN_SHOW_MS     4000                   // how long they stay after a touch
+#define BTN_FADE_MS     180
 
 #define COL_FUR         0xF2E9D8
 #define COL_FOOD        0xFF9E3D
@@ -115,6 +120,8 @@ static lv_image_dsc_t icon_dsc[ICON_COUNT];
 static lv_image_dsc_t drop_dsc[ICON_COUNT];             // the same art, drawn smaller
 static lv_obj_t      *pet_img, *want_img, *cheer_label;
 static lv_obj_t      *prop_img[PROP_MAX];               // carrot, ball, water
+static lv_obj_t      *buttons[METER_COUNT];
+static bool           buttons_shown;
 static icon_id_t      shown_carrot;
 static bool           pending_cheer;                    // the bunny grew while the
                                                         // screen was off
@@ -364,11 +371,11 @@ static void props_for_action(action_t kind)
     switch (kind) {
     case ACT_FEED:
         shown_carrot = ICON_CARROT;
-        prop_show(0, &icon_dsc[ICON_CARROT], 46, 46, COL_FOOD);
+        prop_show(0, &icon_dsc[ICON_CARROT], 52, 52, COL_FOOD);
         break;
     case ACT_PLAY:
         // The ball falls as the bunny rises, so the two read as one bounce.
-        prop_show(0, &icon_dsc[ICON_BALL], 104, 66, COL_FUN);
+        prop_show(0, &icon_dsc[ICON_BALL], 126, 58, COL_FUN);
         prop_move(0, -44, HOP_UP_MS, HOP_DOWN_MS, true);
         break;
     case ACT_WASH: {
@@ -379,6 +386,40 @@ static void props_for_action(action_t kind)
         }
         break;
     }
+    }
+}
+
+static void set_opa(void *obj, int32_t v)
+{
+    lv_obj_set_style_opa((lv_obj_t *) obj, (lv_opa_t) v, 0);
+}
+
+static void fade_done(lv_anim_t *a)
+{
+    lv_obj_add_flag((lv_obj_t *) a->var, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Hidden is not the same as transparent: a button at zero opacity still takes
+// touches. The flag is what keeps the first tap from feeding the bunny.
+static void buttons_set(bool show)
+{
+    if (show == buttons_shown) return;
+    buttons_shown = show;
+
+    for (int i = 0; i < METER_COUNT; i++) {
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, buttons[i]);
+        lv_anim_set_exec_cb(&a, set_opa);
+        lv_anim_set_duration(&a, BTN_FADE_MS);
+        if (show) {
+            lv_obj_remove_flag(buttons[i], LV_OBJ_FLAG_HIDDEN);
+            lv_anim_set_values(&a, 0, LV_OPA_COVER);
+        } else {
+            lv_anim_set_values(&a, LV_OPA_COVER, 0);
+            lv_anim_set_completed_cb(&a, fade_done);
+        }
+        lv_anim_start(&a);
     }
 }
 
@@ -484,7 +525,7 @@ static void make_label(const char *text, int16_t x, int16_t y, uint32_t colour)
     lv_obj_align(l, LV_ALIGN_CENTER, x, y);
 }
 
-static void make_button(const char *text, int16_t x, int16_t y, intptr_t which)
+static lv_obj_t *make_button(const char *text, int16_t x, int16_t y, intptr_t which)
 {
     lv_obj_t *b = lv_button_create(lv_screen_active());
     lv_obj_set_size(b, BTN_W, BTN_H);
@@ -500,6 +541,10 @@ static void make_button(const char *text, int16_t x, int16_t y, intptr_t which)
     lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
     lv_obj_center(l);
+
+    lv_obj_set_style_opa(b, LV_OPA_TRANSP, 0);     // a touch brings them in
+    lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
+    return b;
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +598,7 @@ static void tick_cb(lv_timer_t *timer)
 
     uint32_t idle = lv_display_get_inactive_time(NULL);
     screen_set_light(idle > OFF_AFTER_MS ? OFF : (idle > DIM_AFTER_MS ? DIM : BRIGHT));
+    buttons_set(idle < BTN_SHOW_MS);
     if (backlight == OFF) {
         action_start = 0;                       // nothing half-drawn survives the dark
         cheer_start  = 0;
@@ -647,13 +693,13 @@ void user_ui_init(void)
 
     pet_img = lv_image_create(scr);
     lv_image_set_src(pet_img, &sprite_dsc[pet.stage][SPR_IDLE_A]);
-    lv_obj_align(pet_img, LV_ALIGN_CENTER, 0, -34);
+    lv_obj_align(pet_img, LV_ALIGN_CENTER, 0, -24);
     lv_obj_set_style_image_recolor(pet_img, lv_color_hex(COL_FUR), 0);
     lv_obj_set_style_image_recolor_opa(pet_img, LV_OPA_COVER, 0);
 
     want_img = lv_image_create(scr);
     lv_image_set_src(want_img, &icon_dsc[ICON_CARROT]);
-    lv_obj_align(want_img, LV_ALIGN_CENTER, 118, -78);
+    lv_obj_align(want_img, LV_ALIGN_CENTER, 132, -108);   // clear of the wider body
     lv_obj_set_style_image_recolor(want_img, lv_color_hex(COL_FOOD), 0);
     lv_obj_set_style_image_recolor_opa(want_img, LV_OPA_COVER, 0);
     lv_obj_add_flag(want_img, LV_OBJ_FLAG_HIDDEN);
@@ -669,15 +715,19 @@ void user_ui_init(void)
     lv_label_set_text(cheer_label, "");
     lv_obj_set_style_text_color(cheer_label, lv_color_hex(COL_FUR), 0);
     lv_obj_set_style_text_font(cheer_label, &lv_font_montserrat_16, 0);
-    lv_obj_align(cheer_label, LV_ALIGN_CENTER, 0, 66);
+    lv_obj_set_style_bg_color(cheer_label, lv_color_hex(0x101014), 0);
+    lv_obj_set_style_bg_opa(cheer_label, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(cheer_label, 10, 0);
+    lv_obj_set_style_radius(cheer_label, 16, 0);
+    lv_obj_align(cheer_label, LV_ALIGN_CENTER, 0, 40);
     lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
 
-    // Three buttons in a row across the bottom. The screen is a 233 pixel
-    // circle, so the far end of each outer pill sits 219 from the middle and
-    // clears the edge. Anything wider than this has to leave the row.
-    make_button("NOURRIR", -BTN_STEP, BTN_Y, 0);
-    make_button("JOUER",            0, BTN_Y, 1);
-    make_button("LAVER",     BTN_STEP, BTN_Y, 2);
+    // Three buttons in a row across the bottom, hidden until a child touches
+    // the screen. The display is a 233 pixel circle, so the far end of each
+    // outer pill sits 212 from the middle and clears the edge.
+    buttons[0] = make_button("NOURRIR", -BTN_STEP, BTN_Y, 0);
+    buttons[1] = make_button("JOUER",            0, BTN_Y, 1);
+    buttons[2] = make_button("LAVER",     BTN_STEP, BTN_Y, 2);
 
     start_bob();
     last_us = esp_timer_get_time();
