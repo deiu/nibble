@@ -825,7 +825,7 @@ static sprite_id_t action_face(void)
 // label is a child of the art, so it is clipped by it: keep x under 25, since
 // four letters of Montserrat 24 are 56 px and the art is 288 px wide.
 static const lv_point_t ZZZ_AT[STAGE_COUNT] = {
-    { 24,  9 },     // BABY:  above the right ear, the art above it is empty
+    { 23, 11 },     // BABY:  close over the ear, the art above it is empty
     { 23,  4 },     // YOUNG: higher, the ears are longer
     { 25,  5 },     // ADULT: beside the ear, because there is no room above it
 };
