@@ -23,8 +23,8 @@ holding it.
     ./test.sh
 
 `pet.c` has no LVGL and no ESP headers, so it compiles on the host. The
-self-check runs in a second and fails if the decay, the actions, the sleep
-cycle or the clamps break.
+self-check runs in a second and fails if the decay, the actions, the nap or
+the clamps break.
 
 ## Where things are
 
@@ -35,6 +35,10 @@ cycle or the clamps break.
 | `tools/gen_sprites.py` | builds `sprites.h`; edit a stage here, not by hand |
 | `components/user_app/user_app.cpp` | screen layout and the one timer |
 | `main/user_config.h` | the board pin map, from the Waveshare example |
+| `docs/screens.png` | the picture at the top, drawn by `tools/mock_screen.py` |
+
+Everything under that (display driver, touch, LVGL port) is the Waveshare
+example, unchanged.
 
 ## The art
 
@@ -62,18 +66,23 @@ the ESP-IDF one.
 Nothing on screen asks a child to read. A low need puts its own face on the
 bunny and a picture of what it wants beside its head: a carrot, a ball, a drop
 of water. The same picture is on the button, so the game is a match. Flies
-gather when TIDY falls past the notch, one more for every ten points below,
-and they scatter when you wash. The buttons stay out of the way until the
-screen is touched.
+gather as TIDY falls, one for every quarter of the gauge lost, so the first
+arrives long before the notch and they all leave when you wash. The buttons
+stay out of the way until the screen is touched.
 
-The three gauge words and the restart question are the only text on the
-screen, and both are aimed at the adult rather than the child.
+Every answer costs a little on the next gauge: a meal makes a mess, a game
+makes an appetite, a bath is no fun. The gauge that pays turns white for a
+moment, so a child sees where the cost went. After thirty taps the bunny naps
+for a minute, shuts its eyes, shows a ZzZz beside its head and takes no orders
+until it wakes.
+
+Apart from the ZzZz over a sleeping bunny, the three gauge words and the
+restart question are the only text on the screen, and both are aimed at the
+adult rather than the child.
 
 ## Growth
 
-The bunny is a mammal, so it is born, not hatched: BABY, YOUNG, ADULT.
-
-It grows on good deeds, not on time. A deed is answering a need the bunny
+The pet grows on good deeds, not on time. A deed is answering a need the bunny
 actually had, meaning the gauge was below `PET_WANTS` when you pressed the
 button. Tapping a contented bunny earns nothing, and a need has to fall again
 before it can be answered again, so the rate has a ceiling no amount of
@@ -92,16 +101,14 @@ it is frozen, and a child returning finds it exactly as they left it.
 A baby gets hungry faster than an adult, so growing up makes the bunny easier
 to keep.
 
-Everything below that (display driver, touch, LVGL port) is the Waveshare
-example, unchanged.
-
 ## Tuning
 
 All of the feel is in the block at the top of `pet.c`. A bar falls to zero in
 (100 / rate) minutes. The defaults are set for a child: FOOD empties in 25
 minutes, FUN in 30, TIDY in 40, and time away is capped at 90 minutes so
 that a night off does not ruin the bunny. For a calmer, adult Tamagotchi pace,
-divide the four rates by ten.
+divide the three rates by ten. `SIDE_COST` sets what every answer costs on the
+next gauge, and `SLEEP_AFTER` how many taps buy a nap.
 
 ## Not built yet
 
