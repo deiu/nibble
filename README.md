@@ -49,24 +49,27 @@ generator overwrites them.
 Nothing on screen asks a child to read. A low need puts its own face on the
 bunny and a picture of what it wants beside its head: a carrot, a ball, a drop
 of water. The same picture is on the button, so the game is a match. Flies
-gather when PROPRE falls past the notch, one more for every ten points below,
+gather when TIDY falls past the notch, one more for every ten points below,
 and they scatter when you wash. The buttons stay out of the way until the
 screen is touched.
 
+The three gauge words and the restart question are the only text on the
+screen, and both are aimed at the adult rather than the child.
+
 ## Growth
 
-The bunny is a mammal, so it is born, not hatched: BEBE, JEUNE, ADULTE.
+The bunny is a mammal, so it is born, not hatched: BABY, YOUNG, ADULT.
 
 It grows on good deeds, not on time. A deed is answering a need the bunny
 actually had, meaning the gauge was below `PET_WANTS` when you pressed the
 button. Tapping a contented bunny earns nothing, and a need has to fall again
 before it can be answered again, so the rate has a ceiling no amount of
-tapping can beat. 16 deeds reach JEUNE, 65 reach ADULTE.
+tapping can beat. 16 deeds reach YOUNG, 65 reach ADULT.
 
 This is deliberately not a clock. Paying for powered minutes rewards a child
 for staying glued to the device and flattens the battery for nothing. Paying
 for deeds rewards them for coming back. Against three short visits a day, the
-simulation in the commit history gives JEUNE inside the first day and ADULTE
+simulation in the commit history gives YOUNG inside the first day and ADULT
 on day two or three.
 
 The catch is the missing clock: the bunny only gets hungry while the board is
@@ -82,8 +85,8 @@ example, unchanged.
 ## Tuning
 
 All of the feel is in the block at the top of `pet.c`. A bar falls to zero in
-(100 / rate) minutes. The defaults are set for a child: FAIM empties in 25
-minutes, BONHEUR in 30, PROPRE in 40, and time away is capped at 90 minutes so
+(100 / rate) minutes. The defaults are set for a child: FOOD empties in 25
+minutes, FUN in 30, TIDY in 40, and time away is capped at 90 minutes so
 that a night off does not ruin the bunny. For a calmer, adult Tamagotchi pace,
 divide the four rates by ten.
 
@@ -95,7 +98,7 @@ divide the four rates by ten.
 - More animals. `gen_sprites.py` draws one rabbit; a second animal is a second
   set of drawing functions and a selector.
 - Death.
-- A tap game behind JOUER.
+- A tap game behind PLAY.
 - Running on a battery. The cell header works, but GPIO18 is the power latch
   and this firmware never drives it, so the board drops as soon as the PWR
   button is released. See the vendor's 04_BATT_PWR_Test.

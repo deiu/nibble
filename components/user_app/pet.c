@@ -34,7 +34,7 @@
 // This is deliberately not a clock. Paying for powered minutes rewards a child
 // for staying glued to the device and drains the battery for nothing; paying
 // for deeds rewards them for coming back. Simulated against three short visits
-// a day, these reach JEUNE within the first day and ADULTE on day two or three.
+// a day, these reach YOUNG within the first day and ADULT on day two or three.
 #define GROW_YOUNG_DEEDS  16
 #define GROW_ADULT_DEEDS  65
 
@@ -167,9 +167,9 @@ int pet_flies(const pet_t *p)
 const char *pet_stage_name(pet_stage_t stage)
 {
     switch (stage) {
-    case STAGE_BABY:  return "BEBE";
-    case STAGE_YOUNG: return "JEUNE";
-    case STAGE_ADULT: return "ADULTE";
+    case STAGE_BABY:  return "BABY";
+    case STAGE_YOUNG: return "YOUNG";
+    case STAGE_ADULT: return "ADULT";
     default:          return "";
     }
 }

@@ -30,7 +30,7 @@ LcdTouchPanel touch_dev(i2c_dev, TOUCH_ADDR);
 LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 
 // ---------------------------------------------------------------------------
-// 9 leaves 24 px between the ear tips and the BONHEUR label, and 13 px
+// 9 leaves 24 px between the ear tips and the FUN label, and 13 px
 // between the feet and the button row. 10 left about 5 px at each end, which
 // is not clearance, it is luck.
 #define SCALE           9                      // 32x32 art becomes 288x288
@@ -97,7 +97,7 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 // Each meter: where it sits on the rim, its colour, and the icon the bunny
 // shows when this is the need it wants answered.
 // LVGL measures arc angles clockwise from 3 o'clock, so on the right half of
-// the screen the smaller angle is the higher point. PROPRE is therefore drawn
+// the screen the smaller angle is the higher point. TIDY is therefore drawn
 // in reverse, so that all three gauges fill upward and every notch sits low.
 static float read_hunger(const pet_t *p) { return p->hunger; }
 static float read_happy (const pet_t *p) { return p->happy;  }
@@ -117,9 +117,9 @@ struct Meter {
 };
 
 static Meter meters[] = {
-    { 190, 240, false, read_hunger, COL_FOOD, "FAIM",    -150, -104, MOOD_HUNGRY, ICON_CARROT, NULL, false },
-    { 246, 296, false, read_happy,  COL_FUN,  "BONHEUR",    0, -182, MOOD_BORED,  ICON_BALL,   NULL, false },
-    { 302, 352, true,  read_clean,  COL_TIDY, "PROPRE",   152,  -99, MOOD_DIRTY,  ICON_DROP,   NULL, false },
+    { 190, 240, false, read_hunger, COL_FOOD, "FOOD",   -150, -104, MOOD_HUNGRY, ICON_CARROT, NULL, false },
+    { 246, 296, false, read_happy,  COL_FUN,  "FUN",       0, -182, MOOD_BORED,  ICON_BALL,   NULL, false },
+    { 302, 352, true,  read_clean,  COL_TIDY, "TIDY",   152,  -99, MOOD_DIRTY,  ICON_DROP,   NULL, false },
 };
 #define METER_COUNT ((int) (sizeof(meters) / sizeof(meters[0])))
 
@@ -298,7 +298,7 @@ static void motion_stop(void)
     lv_obj_set_style_translate_y(pet_img, 0, 0);
 }
 
-// JOUER: two bounces off the floor.
+// PLAY: two bounces off the floor.
 static void start_hop(void)
 {
     motion_stop();
@@ -316,7 +316,7 @@ static void start_hop(void)
     lv_anim_start(&a);                          // replaces the bob on the same object
 }
 
-// NOURRIR: short nods down to the bowl, in time with the chewing face.
+// FEED: short nods down to the bowl, in time with the chewing face.
 static void start_chew(void)
 {
     motion_stop();
@@ -334,7 +334,7 @@ static void start_chew(void)
     lv_anim_start(&a);
 }
 
-// LAVER: the shiver a rabbit does to throw the water off, side to side.
+// WASH: the shiver a rabbit does to throw the water off, side to side.
 static void start_shake(void)
 {
     motion_stop();                              // no bobbing while it shivers
@@ -474,7 +474,7 @@ static void buttons_set(bool show)
 }
 
 // Flies. A dirty bunny smells, and the smell is what a child can see: the
-// PROPRE gauge on its own is an abstraction, three flies circling is not.
+// TIDY gauge on its own is an abstraction, three flies circling is not.
 //
 // The count follows the gauge directly rather than the mood, because mood is
 // "the worst need wins". A bunny that is both hungry and filthy should still
@@ -512,7 +512,7 @@ static void fly_arrive(int i)
     fly_wander(i);
 }
 
-// Washing sends them off upward. That flight is the reward for pressing LAVER.
+// Washing sends them off upward. That flight is the reward for pressing WASH.
 static void fly_scatter(int i)
 {
     const int32_t y0 = lv_obj_get_style_translate_y(fly_img[i], LV_PART_MAIN);
@@ -579,7 +579,8 @@ static void hold_ring_hide(lv_event_t *e);   // defined with the other press han
 // This dialogue is the one place on this screen with words on it, and that is
 // deliberate. Everywhere else the pictures are there so a child needs no
 // reading; here the reading is the lock, so that the decision to throw away a
-// grown bunny is taken by whoever can read the question.
+// grown bunny is taken by whoever can read the question. The gauge labels are
+// the only other text, and they are for the adult too.
 static void confirm_hide(void)
 {
     confirm_start = 0;
@@ -985,14 +986,14 @@ void user_ui_init(void)
     lv_obj_add_flag(confirm_box, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *ask = lv_label_create(confirm_box);
-    lv_label_set_text(ask, "NOUVEAU BEBE ?");
+    lv_label_set_text(ask, "NEW BABY?");
     lv_obj_set_style_text_color(ask, lv_color_hex(COL_FUR), 0);
     lv_obj_set_style_text_font(ask, &lv_font_montserrat_16, 0);
     lv_obj_align(ask, LV_ALIGN_TOP_MID, 0, 6);
 
     struct { const char *text; uint32_t colour; int16_t x; lv_event_cb_t cb; } choice[] = {
-        { "NON", 0x4A4A52, -70, confirm_no_cb  },
-        { "OUI", COL_ALERT,  70, confirm_yes_cb },
+        { "NO",  0x4A4A52, -70, confirm_no_cb  },
+        { "YES", COL_ALERT,  70, confirm_yes_cb },
     };
     for (unsigned i = 0; i < sizeof(choice) / sizeof(choice[0]); i++) {
         lv_obj_t *b = lv_button_create(confirm_box);
