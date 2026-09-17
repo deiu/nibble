@@ -47,12 +47,12 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define TICK_MS         100                    // the chewing face changes faster than
                                                // this, so the timer has to keep up
 #define CHEW_MS         260                    // one nod into the bowl
-#define CHEW_TIMES      4
+#define CHEW_TIMES      8
 #define HOP_UP_MS       170
 #define HOP_DOWN_MS     210
-#define HOP_TIMES       2
+#define HOP_TIMES       4
 #define SHAKE_MS        85                     // one half of a shiver
-#define SHAKE_TIMES     6
+#define SHAKE_TIMES     12
 #define BLINK_SLOT_MS   700
 #define CHEER_SHOW_MS   2600
 #define SAVE_EVERY_MIN  5.0f                   // ponytail: keeps NVS writes rare
