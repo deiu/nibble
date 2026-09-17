@@ -47,11 +47,26 @@ screen is touched.
 
 ## Growth
 
-The bunny is a mammal, so it is born, not hatched: BEBE, JEUNE, ADULTE. It
-grows only while every need is above the notch drawn on the gauges. Neglect
-does not hurt it, it just stops the clock. One hour of cared-for time reaches
-JEUNE, six reach ADULTE. A baby gets hungry faster than an adult, so growing
-up makes the bunny easier to keep.
+The bunny is a mammal, so it is born, not hatched: BEBE, JEUNE, ADULTE.
+
+It grows on good deeds, not on time. A deed is answering a need the bunny
+actually had, meaning the gauge was below `PET_WANTS` when you pressed the
+button. Tapping a contented bunny earns nothing, and a need has to fall again
+before it can be answered again, so the rate has a ceiling no amount of
+tapping can beat. 16 deeds reach JEUNE, 65 reach ADULTE.
+
+This is deliberately not a clock. Paying for powered minutes rewards a child
+for staying glued to the device and flattens the battery for nothing. Paying
+for deeds rewards them for coming back. Against three short visits a day, the
+simulation in the commit history gives JEUNE inside the first day and ADULTE
+on day two or three.
+
+The catch is the missing clock: the bunny only gets hungry while the board is
+powered. Left on with the screen asleep it works as described. Switched off,
+it is frozen, and a child returning finds it exactly as they left it.
+
+A baby gets hungry faster than an adult, so growing up makes the bunny easier
+to keep.
 
 Everything below that (display driver, touch, LVGL port) is the Waveshare
 example, unchanged.

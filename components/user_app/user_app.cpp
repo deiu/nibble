@@ -42,6 +42,9 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define FLY_MAX         PET_FLY_MAX            // the rule itself lives in pet.c
 #define FLY_SCATTER_MS  520
 #define PULSE_MS        800                    // half a breath, so 0.6 Hz in all
+#define HOLD_MS         5000                   // a deliberate press, not a brush
+#define HOLD_HINT_MS    900                    // silence before the ring appears
+#define CONFIRM_MS      7000                   // an unanswered question withdraws
 #define ICON_PX_W       (ICON_W * ICON_SCALE)
 #define ICON_PX_H       (ICON_H * ICON_SCALE)
 
@@ -133,6 +136,10 @@ static lv_obj_t      *prop_img[PROP_MAX];               // carrot, ball, water
 static lv_obj_t      *fly_img[FLY_MAX];
 static int            shown_flies = -1;
 static lv_obj_t      *buttons[METER_COUNT];
+static lv_obj_t      *confirm_box;
+static uint32_t       confirm_start;
+static lv_obj_t      *hold_ring;
+static uint32_t       press_start;
 static bool           buttons_shown;
 static icon_id_t      shown_carrot;
 static bool           pending_cheer;                    // the bunny grew while the
@@ -145,6 +152,7 @@ static action_t       action_kind;
 static uint32_t       cheer_start;
 static sprite_id_t    shown_frame = SPR_COUNT;
 static pet_stage_t    shown_stage = STAGE_COUNT;
+static pet_stage_t    noted_stage = STAGE_COUNT;   // last stage we celebrated
 static float          since_save;
 static uint8_t        backlight = BRIGHT;
 
@@ -211,9 +219,9 @@ static bool sprites_load(void)
 // which is the point.
 static bool gauges_sane(const pet_t *p)
 {
-    const float v[] = { p->hunger, p->happy, p->clean, p->energy, p->care_min };
+    const float v[] = { p->hunger, p->happy, p->clean, p->energy };
     for (unsigned i = 0; i < sizeof(v) / sizeof(v[0]); i++)
-        if (!(v[i] >= 0.0f) || !(v[i] <= (i == 4 ? 1.0e9f : 100.0f))) return false;
+        if (!(v[i] >= 0.0f) || !(v[i] <= 100.0f)) return false;
     return true;
 }
 
@@ -234,8 +242,8 @@ static void state_load(void)
     if (nvs_get_blob(nvs_h, "state", &saved, &len) == ESP_OK && len == sizeof(saved)
         && saved.stage < STAGE_COUNT && gauges_sane(&saved)) {
         pet = saved;
-        ESP_LOGI(TAG, "bunny is back: %s, age %u min, care %d min, faim %d bonheur %d propre %d",
-                 pet_stage_name(pet.stage), (unsigned) pet.age_min, (int) pet.care_min,
+        ESP_LOGI(TAG, "bunny is back: %s, age %u min, %u deeds, faim %d bonheur %d propre %d",
+                 pet_stage_name(pet.stage), (unsigned) pet.age_min, (unsigned) pet.deeds,
                  (int) pet.hunger, (int) pet.happy, (int) pet.clean);
     }
 }
@@ -550,6 +558,8 @@ static void cheer(const char *text)
 static void screen_set_light(uint8_t level)
 {
     if (level == backlight) return;
+    if (level == OFF) state_save();             // the child has put it down: the
+                                                // best moment to survive a power cut
     if (backlight == OFF && level != OFF) {
         // The first touch only wakes the screen. A child must not feed the
         // bunny by accident just by picking the device up.
@@ -561,11 +571,85 @@ static void screen_set_light(uint8_t level)
     backlight = level;
 }
 
+static void hold_ring_hide(lv_event_t *e);   // defined with the other press handlers
+
+// Starting over. The bunny never leaves on its own, so this is the only way
+// back to a baby, and it is guarded twice: a long hold, then a question.
+//
+// This dialogue is the one place on this screen with words on it, and that is
+// deliberate. Everywhere else the pictures are there so a child needs no
+// reading; here the reading is the lock, so that the decision to throw away a
+// grown bunny is taken by whoever can read the question.
+static void confirm_hide(void)
+{
+    confirm_start = 0;
+    lv_obj_add_flag(confirm_box, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void confirm_no_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    confirm_hide();
+}
+
+static void confirm_yes_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    confirm_hide();
+
+    pet_init(&pet);
+    state_save();
+    noted_stage = pet.stage;                    // a new baby is not a promotion
+    shown_stage = STAGE_COUNT;
+    shown_frame = SPR_COUNT;
+    action_start = 0;
+    props_hide();
+    flies_set(0);
+    motion_stop();
+    start_bob();
+    ESP_LOGI(TAG, "starting again with a new %s", pet_stage_name(pet.stage));
+}
+
+static void hold_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (confirm_start) return;
+    hold_ring_hide(NULL);
+    buttons_set(false);
+    lv_obj_remove_flag(confirm_box, LV_OBJ_FLAG_HIDDEN);
+    confirm_start = lv_tick_get();
+    if (!confirm_start) confirm_start = 1;
+}
+
 // A press anywhere that is not a button asks for the buttons.
 static void screen_press_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
+    press_start = lv_tick_get();
+    if (!press_start) press_start = 1;
     buttons_set(true);
+}
+
+// Five seconds of nothing happening reads as a broken device, so the hold
+// draws itself along the bottom rim once it is clear the press is deliberate.
+static void hold_ring_hide(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    press_start = 0;
+    lv_obj_add_flag(hold_ring, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void pressing_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (!press_start || confirm_start) return;
+
+    const uint32_t held = lv_tick_elaps(press_start);
+    if (held < HOLD_HINT_MS) return;
+
+    const int32_t part = (int32_t) ((held - HOLD_HINT_MS) * 100 / (HOLD_MS - HOLD_HINT_MS));
+    lv_arc_set_value(hold_ring, part > 100 ? 100 : part);
+    lv_obj_remove_flag(hold_ring, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void action_cb(lv_event_t *e)
@@ -711,7 +795,6 @@ static void tick_cb(lv_timer_t *timer)
     float   mins = (float) (now - last_us) / 60000000.0f;
     last_us = now;
 
-    pet_stage_t was_stage = pet.stage;
     pet_tick(&pet, mins);
 
     since_save += mins;
@@ -720,7 +803,10 @@ static void tick_cb(lv_timer_t *timer)
         since_save = 0.0f;
     }
 
-    if (pet.stage != was_stage) {
+    // Compared against what was last celebrated, not against this tick's own
+    // starting value: a deed done between ticks changes the stage too.
+    if (pet.stage != noted_stage) {
+        noted_stage = pet.stage;
         state_save();                           // growing is worth a write of its own
         pending_cheer = true;
         ESP_LOGI(TAG, "the bunny grew into %s", pet_stage_name(pet.stage));
@@ -729,6 +815,7 @@ static void tick_cb(lv_timer_t *timer)
     uint32_t idle = lv_display_get_inactive_time(NULL);
     screen_set_light(idle > OFF_AFTER_MS ? OFF : (idle > DIM_AFTER_MS ? DIM : BRIGHT));
     if (idle > BTN_SHOW_MS) buttons_set(false);
+    if (confirm_start && lv_tick_elaps(confirm_start) >= CONFIRM_MS) confirm_hide();
     if (backlight == OFF) {
         // Nothing half-drawn survives the dark. Clearing action_start alone
         // left the prop behind, because the only code that hides a prop sits
@@ -809,6 +896,11 @@ void user_ui_init(void)
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scr, screen_press_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(scr, hold_cb, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_add_event_cb(scr, pressing_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(scr, hold_ring_hide, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(scr, hold_ring_hide, LV_EVENT_PRESS_LOST, NULL);
+    lv_indev_set_long_press_time(lv_indev_get_next(NULL), HOLD_MS);
 
     if (!sprites_load()) return;                            // no PSRAM, no bunny
 
@@ -867,6 +959,56 @@ void user_ui_init(void)
     for (int i = 0; i < METER_COUNT; i++)
         buttons[i] = make_button(&meters[i], btn_at[i].x, btn_at[i].y, i);
 
+    hold_ring = lv_arc_create(scr);
+    lv_obj_set_size(hold_ring, ARC_BOX, ARC_BOX);
+    lv_obj_center(hold_ring);
+    lv_arc_set_bg_angles(hold_ring, 25, 155);   // the bottom rim, free of gauges
+    lv_arc_set_range(hold_ring, 0, 100);
+    lv_arc_set_value(hold_ring, 0);
+    lv_obj_remove_style(hold_ring, NULL, LV_PART_KNOB);
+    lv_obj_remove_flag(hold_ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_opa(hold_ring, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(hold_ring, 10, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(hold_ring, lv_color_hex(COL_FUR), LV_PART_INDICATOR);
+    lv_obj_add_flag(hold_ring, LV_OBJ_FLAG_HIDDEN);
+
+    // The start again question. Built last, so it sits above everything.
+    confirm_box = lv_obj_create(scr);
+    lv_obj_set_size(confirm_box, 320, 170);
+    lv_obj_center(confirm_box);
+    lv_obj_set_style_radius(confirm_box, 24, 0);
+    lv_obj_set_style_bg_color(confirm_box, lv_color_hex(0x101014), 0);
+    lv_obj_set_style_bg_opa(confirm_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(confirm_box, lv_color_hex(COL_FUR), 0);
+    lv_obj_set_style_border_width(confirm_box, 2, 0);
+    lv_obj_remove_flag(confirm_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(confirm_box, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *ask = lv_label_create(confirm_box);
+    lv_label_set_text(ask, "NOUVEAU BEBE ?");
+    lv_obj_set_style_text_color(ask, lv_color_hex(COL_FUR), 0);
+    lv_obj_set_style_text_font(ask, &lv_font_montserrat_16, 0);
+    lv_obj_align(ask, LV_ALIGN_TOP_MID, 0, 6);
+
+    struct { const char *text; uint32_t colour; int16_t x; lv_event_cb_t cb; } choice[] = {
+        { "NON", 0x4A4A52, -70, confirm_no_cb  },
+        { "OUI", COL_ALERT,  70, confirm_yes_cb },
+    };
+    for (unsigned i = 0; i < sizeof(choice) / sizeof(choice[0]); i++) {
+        lv_obj_t *b = lv_button_create(confirm_box);
+        lv_obj_set_size(b, 116, 56);
+        lv_obj_align(b, LV_ALIGN_BOTTOM_MID, choice[i].x, -4);
+        lv_obj_set_style_radius(b, 28, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(choice[i].colour), 0);
+        lv_obj_add_event_cb(b, choice[i].cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *l = lv_label_create(b);
+        lv_label_set_text(l, choice[i].text);
+        lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+        lv_obj_center(l);
+    }
+
+    noted_stage = pet.stage;                    // do not cheer a stage on every boot
     start_bob();
     last_us = esp_timer_get_time();
     lv_timer_create(tick_cb, TICK_MS, NULL);

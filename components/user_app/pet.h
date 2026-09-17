@@ -9,10 +9,16 @@
 extern "C" {
 #endif
 
-// A need below this line makes the bunny ask for help, and it stops growing.
-// The gauges draw their notch here too, so the mark on screen is the same rule
-// the bunny obeys. One number, one rule a child can learn.
+// A need below this line makes the bunny ask for help: sad face, red gauge,
+// breathing. The gauges draw their notch here too, so the mark on screen is
+// the same rule the bunny obeys. One number, one rule a child can learn.
 #define PET_NEED_LOW 30.0f
+
+// A need below this line is simply one the bunny would welcome having
+// answered. Answering it is a good deed, and good deeds are what the bunny
+// grows on. Well above PET_NEED_LOW on purpose: a child who tops the bunny up
+// early should be rewarded, not made to let it suffer first.
+#define PET_WANTS    60.0f
 
 // One fly for every quarter of the PROPRE gauge that has been lost, so a full
 // gauge draws none and an empty one draws three. Flies start gathering well
@@ -44,7 +50,7 @@ typedef struct {
     uint32_t    age_min;
     float       age_part;  // minutes not yet whole; ticks are far shorter than a minute
     pet_stage_t stage;
-    float       care_min;  // minutes with every need above PET_NEED_LOW
+    uint16_t    deeds;     // needs answered; the bunny grows on these
 } pet_t;
 
 void        pet_init(pet_t *p);

@@ -27,11 +27,16 @@
 #define WASH_CLEAN     100.0f
 #define WASH_HAPPY      -3.0f    // no bunny enjoys a bath
 
-// Growth. The clock only runs while every need is above PET_NEED_LOW, so
-// neglect does not punish the bunny, it just stops it growing. These are
-// minutes of cared-for time, counted from birth.
-#define GROW_YOUNG_MIN   60.0f
-#define GROW_ADULT_MIN  360.0f
+// Growth, counted in good deeds from birth. A deed is answering a need the
+// bunny actually had, so tapping a full bunny earns nothing and the rate is
+// bounded by how fast a need can fall again.
+//
+// This is deliberately not a clock. Paying for powered minutes rewards a child
+// for staying glued to the device and drains the battery for nothing; paying
+// for deeds rewards them for coming back. Simulated against three short visits
+// a day, these reach JEUNE within the first day and ADULTE on day two or three.
+#define GROW_YOUNG_DEEDS  16
+#define GROW_ADULT_DEEDS  65
 
 // A baby needs more of everything, an adult less. This is what growth buys a
 // child: the bunny becomes easier to look after.
@@ -64,12 +69,17 @@ void pet_init(pet_t *p)
     p->age_min  = 0;
     p->age_part = 0.0f;
     p->stage    = STAGE_BABY;
-    p->care_min = 0.0f;
+    p->deeds    = 0;
 }
 
-static bool well_cared_for(const pet_t *p)
+// Credit one answered need, and let the bunny grow if it has earned enough.
+// Growth happens the instant the deed is done, so a child sees the reward in
+// the same breath as the action that caused it.
+static void good_deed(pet_t *p)
 {
-    return p->hunger > PET_NEED_LOW && p->happy > PET_NEED_LOW && p->clean > PET_NEED_LOW;
+    if (p->deeds < UINT16_MAX) p->deeds++;
+    if (p->stage == STAGE_BABY  && p->deeds >= GROW_YOUNG_DEEDS) p->stage = STAGE_YOUNG;
+    if (p->stage == STAGE_YOUNG && p->deeds >= GROW_ADULT_DEEDS) p->stage = STAGE_ADULT;
 }
 
 void pet_tick(pet_t *p, float minutes)
@@ -93,11 +103,6 @@ void pet_tick(pet_t *p, float minutes)
         if (p->energy <= SLEEP_BELOW) p->asleep = true;
     }
 
-    // Growth is earned. The clock runs only while the bunny is looked after.
-    if (well_cared_for(p)) p->care_min += minutes;
-    if (p->stage == STAGE_BABY  && p->care_min >= GROW_YOUNG_MIN) p->stage = STAGE_YOUNG;
-    if (p->stage == STAGE_YOUNG && p->care_min >= GROW_ADULT_MIN) p->stage = STAGE_ADULT;
-
     // Ticks are half a second, so whole minutes must be carried between them.
     p->age_part += minutes;
     if (p->age_part >= 1.0f) {
@@ -110,26 +115,32 @@ void pet_tick(pet_t *p, float minutes)
 bool pet_feed(pet_t *p)
 {
     if (p->asleep) return false;
+    const bool wanted = p->hunger < PET_WANTS;
     p->hunger = clamp(p->hunger + FEED_HUNGER);
     p->clean  = clamp(p->clean  + FEED_CLEAN);
     p->happy  = clamp(p->happy  + FEED_HAPPY);
+    if (wanted) good_deed(p);
     return true;
 }
 
 bool pet_play(pet_t *p)
 {
     if (p->asleep) return false;
+    const bool wanted = p->happy < PET_WANTS;
     p->happy  = clamp(p->happy  + PLAY_HAPPY);
     p->energy = clamp(p->energy + PLAY_ENERGY);
     p->hunger = clamp(p->hunger + PLAY_HUNGER);
+    if (wanted) good_deed(p);
     return true;
 }
 
 bool pet_wash(pet_t *p)
 {
     if (p->asleep) return false;
+    const bool wanted = p->clean < PET_WANTS;
     p->clean = clamp(p->clean + WASH_CLEAN);
     p->happy = clamp(p->happy + WASH_HAPPY);
+    if (wanted) good_deed(p);
     return true;
 }
 
@@ -170,16 +181,19 @@ const char *pet_stage_name(pet_stage_t stage)
 
 #define NEAR(a, b) (((a) - (b) < 0.01f) && ((b) - (a) < 0.01f))
 
-// Keep every need full, the way an attentive child would.
-static void care_for(pet_t *p, float minutes, float step)
+// Play the way a child does: let time pass, and answer whatever the bunny
+// wants. Returns when the bunny reaches the given stage, or gives up.
+static bool play_until(pet_t *p, pet_stage_t target, float limit_min)
 {
-    for (float t = 0.0f; t < minutes; t += step) {
-        pet_tick(p, step);
+    for (float t = 0.0f; t < limit_min; t += 0.5f) {
+        pet_tick(p, 0.5f);
         if (p->asleep) continue;
-        pet_feed(p);
-        pet_play(p);
-        pet_wash(p);
+        if (p->hunger < PET_WANTS) pet_feed(p);
+        if (p->happy  < PET_WANTS) pet_play(p);
+        if (p->clean  < PET_WANTS) pet_wash(p);
+        if (p->stage >= target) return true;
     }
+    return false;
 }
 
 int main(void)
@@ -261,23 +275,59 @@ int main(void)
     assert(pet_play(&p));
     assert(p.energy < e && p.hunger < h && p.happy > 80.0f);
 
-    // A neglected bunny does not grow, however long it is left.
+    // Time alone grows nothing. Without a child there are no deeds.
     pet_init(&p);
-    for (int i = 0; i < 2000; i++) pet_tick(&p, 1.0f);
+    for (int i = 0; i < 5000; i++) pet_tick(&p, 1.0f);
     assert(p.age_min >= 1000);
-    // It starts fed, so a few minutes of care are banked before the bars fall.
-    // What matters is that the clock then stops, far short of a growth step.
-    assert(p.care_min < GROW_YOUNG_MIN / 2.0f);
+    assert(p.deeds == 0);
     assert(p.stage == STAGE_BABY);
 
-    // A cared-for bunny grows, in order, at the stated times.
+    // Tapping a bunny that wants nothing earns nothing: no growth by spamming.
     pet_init(&p);
-    care_for(&p, GROW_YOUNG_MIN - 5.0f, 0.5f);
+    p.hunger = p.happy = p.clean = 100.0f;
+    for (int i = 0; i < 200; i++) { pet_feed(&p); pet_play(&p); pet_wash(&p); }
+    assert(p.deeds == 0);
     assert(p.stage == STAGE_BABY);
-    care_for(&p, 10.0f, 0.5f);
+
+    // Answering a need that exists is a deed. Answering it twice is one deed,
+    // because the second time the bunny no longer wanted it.
+    pet_init(&p);
+    p.hunger = PET_WANTS - 1.0f;
+    assert(pet_feed(&p));
+    assert(p.deeds == 1);
+    assert(pet_feed(&p));
+    assert(p.deeds == 1);
+
+    // Each need earns on its own.
+    pet_init(&p);
+    p.happy = 10.0f; assert(pet_play(&p)); assert(p.deeds == 1);
+    p.clean = 10.0f; assert(pet_wash(&p)); assert(p.deeds == 2);
+
+    // A sleeping bunny cannot be earned from.
+    pet_init(&p);
+    p.hunger = 10.0f; p.happy = 10.0f; p.clean = 10.0f;
+    p.energy = SLEEP_BELOW + 1.0f;
+    pet_tick(&p, 5.0f);
+    assert(p.asleep);
+    assert(!pet_feed(&p) && !pet_play(&p) && !pet_wash(&p));
+    assert(p.deeds == 0);
+
+    // A child who plays reaches each stage, in order, at the stated deeds.
+    pet_init(&p);
+    assert(play_until(&p, STAGE_YOUNG, 24.0f * 60.0f));
+    assert(p.deeds >= GROW_YOUNG_DEEDS);
     assert(p.stage == STAGE_YOUNG);
-    care_for(&p, GROW_ADULT_MIN - GROW_YOUNG_MIN + 10.0f, 0.5f);
+    assert(play_until(&p, STAGE_ADULT, 96.0f * 60.0f));
+    assert(p.deeds >= GROW_ADULT_DEEDS);
     assert(p.stage == STAGE_ADULT);
+
+    // The deed count cannot wrap a bunny back to being a baby.
+    p.deeds = UINT16_MAX;
+    pet_init(&a); a.deeds = UINT16_MAX; a.stage = STAGE_ADULT;
+    a.hunger = 10.0f;
+    assert(pet_feed(&a));
+    assert(a.deeds == UINT16_MAX);
+    assert(a.stage == STAGE_ADULT);
 
     // Growth buys an easier bunny: the adult empties slower than the baby.
     pet_t baby, adult;
