@@ -57,6 +57,10 @@ change to the rules gets one more assert in the same block.
   art is drawn at `SCALE` 9, centred at y -24: sprite pixel (col, row) is
   screen (89 + 9*col, 65 + 9*row). A child of `pet_img` is clipped to that
   288 px box, and it moves with the bob, the hop and the shiver.
+- **`docs/screens.png` is generated too**, by `tools/mock_screen.py`, which
+  copies the layout numbers out of `user_app.cpp`. Move something on the
+  screen and move it there as well, or the picture in README.md starts to lie.
+  It runs on the system python3 with Pillow, not on the ESP-IDF python.
 - **LVGL 9 names.** `lv_obj_remove_flag`, not `lv_obj_clear_flag`.
 
 ## Commits

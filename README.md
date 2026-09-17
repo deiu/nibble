@@ -5,6 +5,8 @@ A Tamagotchi rabbit for the Waveshare ESP32-S3-Touch-AMOLED-1.32
 
 A nibble is half a byte, and what a rabbit does all day.
 
+![The screen in three states: content, playing, asleep](docs/screens.png)
+
 Everything on screen is a picture, because it is meant for a child who cannot
 read yet: the rabbit's face says what it needs, an icon on the button says
 what that button gives, flies gather when it smells, and a gauge below its
@@ -43,6 +45,17 @@ Every feature of the rabbit is placed from its body ellipse, so a growth stage
 is only a body size and an ear size. The `STAGES` table at the top holds all
 three. Single pixels in `sprites.h` can still be edited by hand, but the
 generator overwrites them.
+
+## The screen, without a board
+
+    /usr/bin/python3 tools/mock_screen.py   # rewrites docs/screens.png
+
+The picture at the top is drawn, not photographed. The rabbit comes from
+`sprites.h` and every number comes from `user_app.cpp`: the gauge angles, the
+band width, the notch at 30, the scale of the art and where each thing sits.
+Move something on the screen and move it here, then look at the result before
+reaching for the USB cable. Needs Pillow, and the system python3 rather than
+the ESP-IDF one.
 
 ## What the bunny shows you
 
