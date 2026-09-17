@@ -1,7 +1,15 @@
-# Bunny
+# nibble
 
-A Tamagotchi bunny for the Waveshare ESP32-S3-Touch-AMOLED-1.32
+A Tamagotchi rabbit for the Waveshare ESP32-S3-Touch-AMOLED-1.32
 (466 x 466 round AMOLED, SH8601 panel over QSPI, CST820 touch).
+
+A nibble is half a byte, and what a rabbit does all day.
+
+Everything on screen is a picture, because it is meant for a child who cannot
+read yet: the rabbit's face says what it needs, an icon on the button says
+what that button gives, flies gather when it smells, and a gauge below its
+notch turns red and breathes. It grows on care given rather than on time spent
+holding it.
 
 ## Build and flash
 
