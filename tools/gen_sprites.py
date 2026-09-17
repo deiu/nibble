@@ -7,7 +7,7 @@ W = H = 32
 FRAMES = ['IDLE_A', 'IDLE_B', 'EAT', 'PLAY', 'SLEEP', 'HUNGRY', 'BORED', 'DIRTY']
 STAGES = [
     # name,    body cx, cy,  rx,   ry,  ear scale, ear lean at rest
-    ('BABY',    15.5, 22.0,  7.5,  6.5,  0.35,  0.60),   # a newborn kit: small, ears flat
+    ('BABY',    15.5, 22.0,  7.5,  6.5,  0.65,  0.45),   # a kit: small, ears short and out
     ('YOUNG',   15.5, 21.0,  9.0,  7.5,  0.70,  0.15),
     ('ADULT',   15.5, 20.0, 10.5,  8.5,  1.00,  0.00),
 ]
@@ -52,7 +52,10 @@ class Body:
         for side in (-1, 1):
             ear(g, self.cx + side * self.rx * 0.33, self.ear_cy + dy,
                 self.ear_rx, self.ear_ry, side * lean)
-            if self.ear_scale > 0.5 and lean < 0.4:      # inner ear, only when it fits
+            # The inner ear is carved out of the outer one, so a narrow ear
+            # would be left as two single-pixel walls. Judge it on the width
+            # in pixels, which is what decides whether it survives.
+            if self.ear_rx >= 2.0 and lean < 0.4:
                 ell(g, self.cx + side * self.rx * 0.33, self.ear_cy + dy - self.ear_ry * 0.15,
                     self.ear_rx * 0.38, self.ear_ry * 0.47, '.')
         ell(g, self.cx, self.cy + dy, self.rx, self.ry)

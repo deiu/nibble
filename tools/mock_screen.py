@@ -108,10 +108,10 @@ def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ba
     return case.resize((W + 40, W + 40), Image.LANCZOS)
 
 PANELS = [
-    ('fed, clean and content',              device('YOUNG', 'IDLE_A', 82, 74, 88)),
+    ('a new kit, fed and content',          device('BABY', 'IDLE_A', 82, 74, 88)),
     ('playing: FUN rises, FOOD pays for it', device('ADULT', 'PLAY', 61, 96, 44,
                                                     buttons=False, paid=0, ball=True)),
-    ('a nap after thirty taps',             device('BABY', 'SLEEP', 46, 52, 22, zzz=True)),
+    ('a nap after thirty taps',             device('YOUNG', 'SLEEP', 46, 52, 22, zzz=True)),
 ]
 PAD, CAP, SIDE = 30, 46, 506
 sheet = Image.new('RGB', (len(PANELS) * (SIDE + PAD) + PAD, SIDE + 2 * PAD + CAP), '#0B0B0D')
