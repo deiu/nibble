@@ -94,10 +94,6 @@ class Body:
             px(g, self.cx + self.rx * ox, self.cy + self.ry * oy + dy, '.')
             px(g, self.cx + self.rx * ox + 1, self.cy + self.ry * oy + dy + 1, '.')
 
-def zzz(g):
-    hline(g, 27, 31, 0, '#'); px(g, 30, 1, '#'); px(g, 29, 2, '#'); px(g, 28, 3, '#')
-    hline(g, 27, 31, 4, '#')
-
 def build(stage):
     name, cx, cy, rx, ry, es, el = stage
     b = Body(cx, cy, rx, ry, es, el)
@@ -107,7 +103,9 @@ def build(stage):
     g = b.draw();               b.eyes(g, shut=True); b.nose(g);     b.mouth_w(g);     f['IDLE_B'] = g
     g = b.draw();               b.eyes(g);          b.nose(g);       b.mouth_open(g);  f['EAT'] = g
     g = b.draw(dy=-2);          b.eyes(g, -2);      b.nose(g, -2);   b.mouth_open(g, -2); f['PLAY'] = g
-    g = b.draw(ears='down');    b.eyes(g, shut=True); b.nose(g);     b.mouth_w(g); zzz(g); f['SLEEP'] = g
+    # No Z in the art: the screen draws a ZzZz label beside the head, which can
+    # follow each stage's ears in a way five fixed pixels cannot.
+    g = b.draw(ears='down');    b.eyes(g, shut=True); b.nose(g);     b.mouth_w(g);     f['SLEEP'] = g
     # Hungry: ears forward and up, mouth open, eyes wide.
     g = b.draw(ears='up');      b.eyes(g);          b.nose(g);       b.mouth_open(g);  f['HUNGRY'] = g
     # Bored: ears flopped, a flat mouth, eyes looking to one side.
