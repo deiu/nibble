@@ -45,8 +45,9 @@ typedef struct {
     float       hunger;    // 100 is a full belly, 0 is starving
     float       happy;
     float       clean;
-    float       energy;
     bool        asleep;
+    uint16_t    acts;      // taps answered since the last nap
+    float       nap_left;  // minutes of nap still to run
     uint32_t    age_min;
     float       age_part;  // minutes not yet whole; ticks are far shorter than a minute
     pet_stage_t stage;

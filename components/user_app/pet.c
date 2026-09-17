@@ -11,18 +11,18 @@
 #define HUNGER_PER_MIN   4.00f   // empty in 25 min
 #define HAPPY_PER_MIN    3.30f   // empty in 30 min
 #define CLEAN_PER_MIN    2.50f   // empty in 40 min
-#define ENERGY_PER_MIN   1.10f   // awake for about 90 min
-#define ENERGY_SLEEP     8.00f   // asleep for about 11 min
 #define SLEEP_RATE       0.40f   // needs decay this much slower while asleep
 
-#define SLEEP_BELOW     12.0f    // the bunny falls asleep under this energy
-#define WAKE_ABOVE      96.0f
+// Tiredness is counted in taps, not in minutes. A clock the child cannot see
+// makes the nap look random; thirty answered taps is a rule they can feel.
+// The counter starts again at every waking, so a nap never follows a nap.
+#define SLEEP_AFTER     30       // taps answered before the bunny needs a nap
+#define NAP_MIN          1.0f    // and the nap lasts this long
 
 #define FEED_HUNGER     25.0f
 #define FEED_CLEAN      -5.0f
 #define FEED_HAPPY       3.0f
 #define PLAY_HAPPY      22.0f
-#define PLAY_ENERGY     -8.0f
 #define PLAY_HUNGER     -6.0f
 #define WASH_CLEAN     100.0f
 #define WASH_HAPPY      -3.0f    // no bunny enjoys a bath
@@ -64,12 +64,22 @@ void pet_init(pet_t *p)
     p->hunger   = 80.0f;
     p->happy    = 80.0f;
     p->clean    = 100.0f;
-    p->energy   = 90.0f;
     p->asleep   = false;
+    p->acts     = 0;
+    p->nap_left = 0.0f;
     p->age_min  = 0;
     p->age_part = 0.0f;
     p->stage    = STAGE_BABY;
     p->deeds    = 0;
+}
+
+// One more tap answered. Thirty of them and the bunny takes its minute.
+static void tire(pet_t *p)
+{
+    if (++p->acts < SLEEP_AFTER) return;
+    p->acts     = 0;
+    p->asleep   = true;
+    p->nap_left = NAP_MIN;
 }
 
 // Credit one answered need, and let the bunny grow if it has earned enough.
@@ -95,12 +105,18 @@ void pet_tick(pet_t *p, float minutes)
     p->happy  = clamp(p->happy  - HAPPY_PER_MIN  * minutes * scale);
     p->clean  = clamp(p->clean  - CLEAN_PER_MIN  * minutes * scale);
 
+    // A saved blob from an older build can land a wild number in the tap
+    // count. It is bounded here, where a bad value costs nothing.
+    if (p->acts >= SLEEP_AFTER) p->acts = 0;   // tire() never leaves it that high
+
+    // The nap runs down on the clock. A saved blob with a broken number fails
+    // the comparison and wakes the bunny, which is the safe way to fail.
     if (p->asleep) {
-        p->energy = clamp(p->energy + ENERGY_SLEEP * minutes);
-        if (p->energy >= WAKE_ABOVE) p->asleep = false;
-    } else {
-        p->energy = clamp(p->energy - ENERGY_PER_MIN * minutes);
-        if (p->energy <= SLEEP_BELOW) p->asleep = true;
+        p->nap_left -= minutes;
+        if (!(p->nap_left > 0.0f)) {
+            p->asleep   = false;
+            p->nap_left = 0.0f;
+        }
     }
 
     // Ticks are half a second, so whole minutes must be carried between them.
@@ -120,6 +136,7 @@ bool pet_feed(pet_t *p)
     p->clean  = clamp(p->clean  + FEED_CLEAN);
     p->happy  = clamp(p->happy  + FEED_HAPPY);
     if (wanted) good_deed(p);
+    tire(p);
     return true;
 }
 
@@ -128,9 +145,9 @@ bool pet_play(pet_t *p)
     if (p->asleep) return false;
     const bool wanted = p->happy < PET_WANTS;
     p->happy  = clamp(p->happy  + PLAY_HAPPY);
-    p->energy = clamp(p->energy + PLAY_ENERGY);
     p->hunger = clamp(p->hunger + PLAY_HUNGER);
     if (wanted) good_deed(p);
+    tire(p);
     return true;
 }
 
@@ -141,6 +158,7 @@ bool pet_wash(pet_t *p)
     p->clean = clamp(p->clean + WASH_CLEAN);
     p->happy = clamp(p->happy + WASH_HAPPY);
     if (wanted) good_deed(p);
+    tire(p);
     return true;
 }
 
@@ -235,8 +253,6 @@ int main(void)
     pet_init(&p);
     pet_tick(&p, 100000.0f);
     assert(p.hunger >= 0.0f && p.hunger <= 100.0f);
-    assert(p.energy >= 0.0f && p.energy <= 100.0f);
-    p.asleep = false;                       // a sleeping bunny refuses the bath
     for (int i = 0; i < 50; i++) pet_wash(&p);
     assert(NEAR(p.clean, 100.0f));
 
@@ -246,7 +262,7 @@ int main(void)
     pet_tick(&a, MAX_CATCHUP_MIN);
     pet_tick(&b, MAX_CATCHUP_MIN * 100.0f);
     assert(NEAR(a.hunger, b.hunger));
-    assert(NEAR(a.energy, b.energy));
+    assert(NEAR(a.happy, b.happy));
 
     // Negative or zero time changes nothing.
     pet_init(&a); b = a;
@@ -254,26 +270,47 @@ int main(void)
     pet_tick(&a, 0.0f);
     assert(NEAR(a.hunger, b.hunger) && a.age_min == b.age_min);
 
-    // The bunny falls asleep when tired, recovers, and wakes up again.
+    // Taps make the bunny tired: the nap comes on the thirtieth, not before.
     pet_init(&p);
-    p.energy = SLEEP_BELOW + 1.0f;
-    pet_tick(&p, 5.0f);
+    for (int i = 0; i < SLEEP_AFTER - 1; i++) assert(pet_feed(&p));
+    assert(!p.asleep);
+    assert(pet_feed(&p));                   // the thirtieth
     assert(p.asleep);
     assert(pet_mood(&p) == MOOD_ASLEEP);
     assert(!pet_feed(&p) && !pet_play(&p) && !pet_wash(&p));  // no poking a sleeping bunny
     float hunger_before = p.hunger;
-    pet_tick(&p, 60.0f);
+
+    // The nap lasts one minute, then the count starts again from zero.
+    pet_tick(&p, NAP_MIN * 0.9f);
+    assert(p.asleep);
+    pet_tick(&p, NAP_MIN * 0.2f);
     assert(!p.asleep);
-    assert(p.energy > 90.0f);
+    assert(p.acts == 0);
     // Needs still fall while asleep, but slower than when awake.
     assert(p.hunger < hunger_before);
-    assert(p.hunger > hunger_before - 60.0f * HUNGER_PER_MIN);
+    assert(p.hunger > hunger_before - 1.1f * NAP_MIN * HUNGER_PER_MIN);
 
-    // Playing costs energy and food.
+    // Time alone never tires the bunny out. Only taps do.
     pet_init(&p);
-    float e = p.energy, h = p.hunger;
-    assert(pet_play(&p));
-    assert(p.energy < e && p.hunger < h && p.happy > 80.0f);
+    for (int i = 0; i < 1000; i++) pet_tick(&p, 1.0f);
+    assert(!p.asleep);
+
+    // A nap never follows a nap: after waking, thirty more taps are needed.
+    for (int i = 0; i < SLEEP_AFTER - 1; i++) assert(pet_play(&p));
+    assert(!p.asleep);
+
+    // A broken nap length from a bad save wakes the bunny instead of trapping
+    // it, and a wild tap count is put back to zero.
+    pet_init(&p);
+    p.asleep = true;
+    p.nap_left = 0.0f / 0.0f;               // NaN
+    p.acts = 60000;
+    pet_tick(&p, 0.1f);
+    assert(!p.asleep);
+    assert(p.acts == 0);
+    p.acts = SLEEP_AFTER;                   // the bound itself is out of reach too
+    pet_tick(&p, 0.1f);
+    assert(p.acts == 0);
 
     // Time alone grows nothing. Without a child there are no deeds.
     pet_init(&p);
@@ -306,8 +343,7 @@ int main(void)
     // A sleeping bunny cannot be earned from.
     pet_init(&p);
     p.hunger = 10.0f; p.happy = 10.0f; p.clean = 10.0f;
-    p.energy = SLEEP_BELOW + 1.0f;
-    pet_tick(&p, 5.0f);
+    p.asleep = true; p.nap_left = NAP_MIN; p.deeds = 0;
     assert(p.asleep);
     assert(!pet_feed(&p) && !pet_play(&p) && !pet_wash(&p));
     assert(p.deeds == 0);

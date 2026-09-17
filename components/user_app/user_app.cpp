@@ -133,7 +133,7 @@ static pet_t          pet;
 static lv_image_dsc_t sprite_dsc[STAGE_COUNT][SPR_COUNT];
 static lv_image_dsc_t icon_dsc[ICON_COUNT];
 static lv_image_dsc_t drop_dsc[ICON_COUNT];             // the same art, drawn smaller
-static lv_obj_t      *pet_img, *cheer_label;
+static lv_obj_t      *pet_img, *cheer_label, *zzz_label;
 static lv_obj_t      *prop_img[PROP_MAX];               // carrot, ball, water
 static lv_obj_t      *fly_img[FLY_MAX];
 static int            shown_flies = -1;
@@ -222,7 +222,7 @@ static bool sprites_load(void)
 // which is the point.
 static bool gauges_sane(const pet_t *p)
 {
-    const float v[] = { p->hunger, p->happy, p->clean, p->energy };
+    const float v[] = { p->hunger, p->happy, p->clean };
     for (unsigned i = 0; i < sizeof(v) / sizeof(v[0]); i++)
         if (!(v[i] >= 0.0f) || !(v[i] <= 100.0f)) return false;
     return true;
@@ -808,6 +808,18 @@ static sprite_id_t action_face(void)
     }
 }
 
+// Where the ZzZz hangs, in sprite pixels from the top left of the art, so the
+// numbers can be read straight off sprites.h. The head climbs and widens as
+// the bunny grows: the baby's ears start at row 15, the adult's at row 3, so
+// the ZzZz moves up for the young one and steps aside for the adult. The
+// label is a child of the art, so it is clipped by it: keep x under 25, since
+// four letters of Montserrat 24 are 56 px and the art is 288 px wide.
+static const lv_point_t ZZZ_AT[STAGE_COUNT] = {
+    { 24,  9 },     // BABY:  above the right ear, the art above it is empty
+    { 23,  4 },     // YOUNG: higher, the ears are longer
+    { 25,  5 },     // ADULT: beside the ear, because there is no room above it
+};
+
 // One timer runs everything. Elapsed time comes from the hardware clock, not
 // from counting timer calls, so a busy redraw cannot slow the bunny down.
 static void tick_cb(lv_timer_t *timer)
@@ -849,6 +861,7 @@ static void tick_cb(lv_timer_t *timer)
         props_hide();
         motion_stop();
         lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
@@ -890,6 +903,14 @@ static void tick_cb(lv_timer_t *timer)
     if (cheer_start && lv_tick_elaps(cheer_start) >= CHEER_SHOW_MS) {
         lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
         cheer_start = 0;
+    }
+
+    if (pet.asleep) {
+        lv_obj_align(zzz_label, LV_ALIGN_TOP_LEFT,
+                     ZZZ_AT[pet.stage].x * SCALE, ZZZ_AT[pet.stage].y * SCALE);
+        lv_obj_remove_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
     }
 
     sprite_id_t want_frame;
@@ -940,6 +961,13 @@ void user_ui_init(void)
     lv_obj_align(pet_img, LV_ALIGN_CENTER, 0, -24);
     lv_obj_set_style_image_recolor(pet_img, lv_color_hex(COL_FUR), 0);
     lv_obj_set_style_image_recolor_opa(pet_img, LV_OPA_COVER, 0);
+
+    // A child of the bunny, so it bobs, hops and shivers with it.
+    zzz_label = lv_label_create(pet_img);
+    lv_label_set_text(zzz_label, "ZzZz");
+    lv_obj_set_style_text_font(zzz_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(zzz_label, lv_color_hex(COL_FUR), 0);
+    lv_obj_add_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
 
     // Props are made after the bunny, so the carrot sits on top of the fur.
     for (int i = 0; i < PROP_MAX; i++) {
