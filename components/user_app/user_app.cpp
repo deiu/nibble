@@ -66,6 +66,8 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define SHAKE_TIMES     12
 #define BLINK_SLOT_MS   700
 #define CHEER_SHOW_MS   2600
+#define COST_FLASH_MS   900                    // the gauge that just paid for an
+                                               // action is marked this long
 #define SAVE_EVERY_MIN  5.0f                   // ponytail: keeps NVS writes rare
 
 #define ARC_LEN         12                     // radial thickness of a gauge band
@@ -128,6 +130,13 @@ static Meter meters[] = {
 // Each button has its own motion and its own face. A child should be able to
 // tell what happened with the sound off and the labels unread.
 typedef enum { ACT_FEED, ACT_PLAY, ACT_WASH } action_t;
+
+// Every action costs a little on the next gauge round the ring, which pet.c
+// charges. A bar that falls on its own tells a child nothing, so the gauge
+// that paid is marked white for a moment: a meal costs TIDY, a game costs
+// FOOD, a bath costs FUN. Indexed by action_t, holding a meters[] index.
+static const int COST_METER[] = { 2, 0, 1 };
+static uint32_t  cost_at[METER_COUNT];      // when each meter last paid
 
 static pet_t          pet;
 static lv_image_dsc_t sprite_dsc[STAGE_COUNT][SPR_COUNT];
@@ -692,6 +701,7 @@ static void action_cb(lv_event_t *e)
 
     action_start = lv_tick_get();
     if (!action_start) action_start = 1;        // 0 means "nothing showing"
+    cost_at[COST_METER[action_kind]] = action_start;
 
     switch (action_kind) {
     case ACT_FEED: start_chew();  break;
@@ -878,9 +888,11 @@ static void tick_cb(lv_timer_t *timer)
     for (int i = 0; i < METER_COUNT; i++) {
         const float value = meters[i].read(&pet);
         const bool  low   = value < PET_NEED_LOW;
+        const bool  paid  = cost_at[i] && lv_tick_elaps(cost_at[i]) < COST_FLASH_MS;
         lv_arc_set_value(meters[i].arc, (int32_t) value);
         lv_obj_set_style_arc_color(meters[i].arc,
-                                   lv_color_hex(low ? COL_ALERT : meters[i].colour),
+                                   lv_color_hex(low ? COL_ALERT : paid ? COL_MARK
+                                                                      : meters[i].colour),
                                    LV_PART_INDICATOR);
         pulse_set(i, low);
     }

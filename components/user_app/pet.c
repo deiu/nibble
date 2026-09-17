@@ -19,13 +19,19 @@
 #define SLEEP_AFTER     30       // taps answered before the bunny needs a nap
 #define NAP_MIN          1.0f    // and the nap lasts this long
 
+// Every answer costs a little on the next gauge round the ring: a meal makes
+// a mess, a game makes an appetite, a bath is no fun. One knob for all three,
+// and it is kept small on purpose. The cost opens the next need a crack; it
+// must never be enough to make a problem out of a gauge that was full.
+#define SIDE_COST        5.0f
+
 #define FEED_HUNGER     25.0f
-#define FEED_CLEAN      -5.0f
+#define FEED_CLEAN      (-SIDE_COST)
 #define FEED_HAPPY       3.0f
 #define PLAY_HAPPY      22.0f
-#define PLAY_HUNGER     -6.0f
+#define PLAY_HUNGER     (-SIDE_COST)
 #define WASH_CLEAN     100.0f
-#define WASH_HAPPY      -3.0f    // no bunny enjoys a bath
+#define WASH_HAPPY      (-SIDE_COST)
 
 // Growth, counted in good deeds from birth. A deed is answering a need the
 // bunny actually had, so tapping a full bunny earns nothing and the rate is
@@ -334,6 +340,19 @@ int main(void)
     assert(p.deeds == 1);
     assert(pet_feed(&p));
     assert(p.deeds == 1);
+
+    // The ring: every answer costs a little on the next gauge, and never
+    // enough to push a full gauge anywhere near its notch.
+    assert(100.0f - SIDE_COST > PET_WANTS);
+    pet_init(&p);
+    p.hunger = p.happy = p.clean = 100.0f;
+    assert(pet_feed(&p));  assert(NEAR(p.clean,  100.0f - SIDE_COST));
+    pet_init(&p);
+    p.hunger = p.happy = p.clean = 100.0f;
+    assert(pet_play(&p));  assert(NEAR(p.hunger, 100.0f - SIDE_COST));
+    pet_init(&p);
+    p.hunger = p.happy = p.clean = 100.0f;
+    assert(pet_wash(&p));  assert(NEAR(p.happy,  100.0f - SIDE_COST));
 
     // Each need earns on its own.
     pet_init(&p);
