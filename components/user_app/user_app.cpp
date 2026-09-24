@@ -91,6 +91,9 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define BTN_MID_Y       152
 #define BTN_SHOW_MS     4000                   // how long they stay after a touch
 #define BTN_FADE_MS     180
+#define BTN_NEED_BELOW  75.0f                  // a gauge under this keeps the
+                                               // buttons out on its own
+
 // The board's own gauge, on the rim below the bunny that the three needs leave
 // empty. LVGL angles run clockwise from 3 o'clock, so 60 to 120 straddles 6
 // o'clock, and the reverse mode fills it from the left, the way a battery fills.
@@ -921,7 +924,6 @@ static void tick_cb(lv_timer_t *timer)
 
     uint32_t idle = lv_display_get_inactive_time(NULL);
     screen_set_light(idle > OFF_AFTER_MS ? OFF : (idle > DIM_AFTER_MS ? DIM : BRIGHT));
-    if (idle > BTN_SHOW_MS) buttons_set(false);
     if (confirm_start && lv_tick_elaps(confirm_start) >= CONFIRM_MS) confirm_hide();
     if (backlight == OFF) {
         // Nothing half-drawn survives the dark. Clearing action_start alone
@@ -934,6 +936,7 @@ static void tick_cb(lv_timer_t *timer)
         motion_stop();
         lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
+        buttons_set(false);
         return;
     }
 
@@ -947,9 +950,11 @@ static void tick_cb(lv_timer_t *timer)
 
     pet_mood_t mood = pet_mood(&pet);
 
+    bool wants_help = false;
     for (int i = 0; i < METER_COUNT; i++) {
         const float value = meters[i].read(&pet);
         const bool  low   = value < PET_NEED_LOW;
+        if (value < BTN_NEED_BELOW) wants_help = true;
         const bool  paid  = cost_at[i] && lv_tick_elaps(cost_at[i]) < COST_FLASH_MS;
         lv_arc_set_value(meters[i].arc, (int32_t) value);
         lv_obj_set_style_arc_color(meters[i].arc,
@@ -958,6 +963,13 @@ static void tick_cb(lv_timer_t *timer)
                                    LV_PART_INDICATOR);
         pulse_set(i, low);
     }
+
+    // A gauge under BTN_NEED_BELOW keeps the buttons out by itself, so the help
+    // is one tap away rather than two. The three cases that hide them on
+    // purpose still win: an action has the stage, the hold asks a question, and
+    // a sleeping bunny takes no orders anyway.
+    if (wants_help && !action_start && !confirm_start && !pet.asleep) buttons_set(true);
+    else if (idle > BTN_SHOW_MS)                                      buttons_set(false);
 
     if (!bat_at || lv_tick_elaps(bat_at) >= BAT_EVERY_MS) {
         const bool first = !bat_at;

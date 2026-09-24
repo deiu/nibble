@@ -68,7 +68,8 @@ bunny and a picture of what it wants beside its head: a carrot, a ball, a drop
 of water. The same picture is on the button, so the game is a match. Flies
 gather as TIDY falls, one for every quarter of the gauge lost, so the first
 arrives long before the notch and they all leave when you wash. The buttons
-stay out of the way until the screen is touched.
+stay out of the way until the screen is touched, unless a gauge has fallen
+below 75, and then they stay out so that the help is one tap away.
 
 Every answer costs a little on the next gauge: a meal makes a mess, a game
 makes an appetite, a bath is no fun. The gauge that pays turns white for a
