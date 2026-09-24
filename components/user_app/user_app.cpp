@@ -42,6 +42,8 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define FLY_MAX         PET_FLY_MAX            // the rule itself lives in pet.c
 #define FLY_SCATTER_MS  520
 #define PULSE_MS        800                    // half a breath, so 0.6 Hz in all
+#define ZZZ_PULSE_MS    1500                   // a sleeper breathes slower than an
+                                               // alarmed gauge does
 #define HOLD_MS         5000                   // a deliberate press, not a brush
 #define HOLD_HINT_MS    900                    // silence before the ring appears
 #define HOLD_INSET      30                     // trim the sprite's empty corners out
@@ -980,6 +982,20 @@ void user_ui_init(void)
     lv_obj_set_style_text_font(zzz_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(zzz_label, lv_color_hex(COL_FUR), 0);
     lv_obj_add_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
+
+    // The breath runs forever, awake or not: a hidden label draws nothing, so
+    // there is nothing to start and stop when the bunny wakes.
+    // ponytail: no start/stop pair, add one if the anim ever costs power
+    lv_anim_t zzz_breath;
+    lv_anim_init(&zzz_breath);
+    lv_anim_set_var(&zzz_breath, zzz_label);
+    lv_anim_set_exec_cb(&zzz_breath, set_opa);
+    lv_anim_set_values(&zzz_breath, LV_OPA_20, LV_OPA_COVER);
+    lv_anim_set_duration(&zzz_breath, ZZZ_PULSE_MS);
+    lv_anim_set_reverse_duration(&zzz_breath, ZZZ_PULSE_MS);
+    lv_anim_set_repeat_count(&zzz_breath, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&zzz_breath, lv_anim_path_ease_in_out);
+    lv_anim_start(&zzz_breath);
 
     // Props are made after the bunny, so the carrot sits on top of the fur.
     for (int i = 0; i < PROP_MAX; i++) {
