@@ -44,6 +44,9 @@ METERS = [   # start, end, reverse, colour, label, label x, label y
     (302, 352, True,  '#5AC8FA', 'TIDY',  152,  -99),
 ]
 BUTTONS = [(-122, 100, 'CARROT', 0), (0, 152, 'BALL', 1), (122, 100, 'DROP', 2)]
+BAT_ARC = (60, 120)                         # the free rim under the bunny
+BAT_LOW = 20
+BAT_LABEL = (-130, 160)                     # left of the arc, inside the rim
 ZZZ_AT = {'BABY': (23, 11), 'YOUNG': (23, 4), 'ADULT': (25, 5)}
 FLY_AT = [(-140, -20), (140, -55), (-150, 60)]
 FONT = '/System/Library/Fonts/Supplemental/Arial Bold.ttf'   # stands in for Montserrat
@@ -57,7 +60,8 @@ def art(d, rows, cell, cx, cy, colour):
                 d.rectangle([x0 + c * cell, y0 + r * cell,
                              x0 + (c + 1) * cell - 1, y0 + (r + 1) * cell - 1], fill=colour)
 
-def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ball=False):
+def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ball=False,
+           bat=70):
     img = Image.new('RGB', (W * K, W * K), '#000000')
     d = ImageDraw.Draw(img)
     box = [(C - ARC_BOX / 2) * K] * 2 + [(C + ARC_BOX / 2) * K] * 2
@@ -78,6 +82,16 @@ def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ba
                 for r in (ARC_R - NOTCH_LEN / 2, ARC_R + NOTCH_LEN / 2)]
         d.line(ends, fill=MARK, width=NOTCH_W * K)
         d.text(((C + lx) * K, (C + ly) * K), text, font=label_font, fill=col, anchor='mm')
+
+    # The board's own gauge, on the rim the three needs leave empty. It fills
+    # from the left, like a battery, and it wears no colour of theirs.
+    a0, a1 = BAT_ARC
+    d.arc(box, a0, a1, fill=TRACK, width=ARC_LEN * K)
+    span = (a1 - a0) * bat / 100.0
+    if span > 0:
+        d.arc(box, a1 - span, a1, fill=ALERT if bat < BAT_LOW else FUR, width=ARC_LEN * K)
+    d.text(((C + BAT_LABEL[0]) * K, (C + BAT_LABEL[1]) * K), 'BAT',
+           font=label_font, fill=FUR, anchor='mm')
 
     for at in FLY_AT[:min(3, max(0, int((100 - tidy) / 25)))]:
         art(d, ICON['FLY'], 2 * K, (C + at[0]) * K, (C + at[1]) * K, FLY)
@@ -110,8 +124,9 @@ def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ba
 PANELS = [
     ('a new kit, fed and content',          device('BABY', 'IDLE_A', 82, 74, 88)),
     ('playing: FUN rises, FOOD pays for it', device('ADULT', 'PLAY', 61, 96, 44,
-                                                    buttons=False, paid=0, ball=True)),
-    ('a nap after thirty taps',             device('YOUNG', 'SLEEP', 46, 52, 22, zzz=True)),
+                                                    buttons=False, paid=0, ball=True,
+                                                    bat=44)),
+    ('a nap after thirty taps',             device('YOUNG', 'SLEEP', 46, 52, 22, zzz=True, bat=14)),
 ]
 PAD, CAP, SIDE = 30, 46, 506
 sheet = Image.new('RGB', (len(PANELS) * (SIDE + PAD) + PAD, SIDE + 2 * PAD + CAP), '#0B0B0D')

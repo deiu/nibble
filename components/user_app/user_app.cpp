@@ -7,6 +7,9 @@
 #include <string.h>
 
 #include "driver/gpio.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
+#include "esp_adc/adc_oneshot.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -88,6 +91,18 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define BTN_MID_Y       152
 #define BTN_SHOW_MS     4000                   // how long they stay after a touch
 #define BTN_FADE_MS     180
+// The board's own gauge, on the rim below the bunny that the three needs leave
+// empty. LVGL angles run clockwise from 3 o'clock, so 60 to 120 straddles 6
+// o'clock, and the reverse mode fills it from the left, the way a battery fills.
+#define BAT_ADC_CH      ADC_CHANNEL_3          // GPIO 4, the only pin on the cell
+#define BAT_ARC_START   60
+#define BAT_ARC_END     120
+#define BAT_LOW         20                     // under this the arc turns red
+#define BAT_LABEL_X     (-130)                 // left of the arc, inside the rim
+#define BAT_LABEL_Y     160                    // and clear of the left button
+#define BAT_EVERY_MS    5000                   // a cell moves slower than a bunny
+#define BAT_EMPTY_MV    3300                   // a lithium cell with nothing left
+#define BAT_FULL_MV     4150                   // and one off the charger
 
 #define COL_FUR         0xF2E9D8
 #define COL_FOOD        0xFF9E3D
@@ -149,6 +164,9 @@ static lv_obj_t      *prop_img[PROP_MAX];               // carrot, ball, water
 static lv_obj_t      *fly_img[FLY_MAX];
 static int            shown_flies = -1;
 static lv_obj_t      *buttons[METER_COUNT];
+static lv_obj_t      *bat_arc;
+static uint32_t       bat_at;                  // when the cell was last read
+static int            bat_mv;                  // smoothed, so the arc does not jitter
 static lv_obj_t      *confirm_box;
 static uint32_t       confirm_start;
 static lv_obj_t      *hold_ring;
@@ -714,6 +732,48 @@ static void action_cb(lv_event_t *e)
     buttons_set(false);                         // let the bunny have the stage
 }
 
+// The cell hangs on a 1:2 divider into ADC1 channel 3. The pin, the attenuation
+// and the doubling are the ones the Waveshare ADC example uses for this board.
+// ponytail: curve fitting is the vendor's own choice, so the numbers agree with
+// their test sketch and there is nothing of ours to calibrate.
+static adc_oneshot_unit_handle_t adc1;
+static adc_cali_handle_t         adc_cali;
+
+static void battery_init(void)
+{
+    adc_oneshot_unit_init_cfg_t unit = {};
+    unit.unit_id = ADC_UNIT_1;
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit, &adc1));
+
+    adc_oneshot_chan_cfg_t chan = {};
+    chan.atten    = ADC_ATTEN_DB_12;            // the divided cell reaches 2.1 V
+    chan.bitwidth = ADC_BITWIDTH_12;
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1, BAT_ADC_CH, &chan));
+
+    adc_cali_curve_fitting_config_t cali = {};
+    cali.unit_id  = ADC_UNIT_1;
+    cali.chan     = BAT_ADC_CH;
+    cali.atten    = ADC_ATTEN_DB_12;
+    cali.bitwidth = ADC_BITWIDTH_12;
+    ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali, &adc_cali));
+}
+
+// Percent of a lithium cell, or -1 when the reading fails. The volts are
+// smoothed first: one raw reading moves by a few percent between ticks, and a
+// gauge that jitters looks broken.
+static int battery_pct(void)
+{
+    int raw, mv;
+    if (adc_oneshot_read(adc1, BAT_ADC_CH, &raw) != ESP_OK)         return -1;
+    if (adc_cali_raw_to_voltage(adc_cali, raw, &mv) != ESP_OK)      return -1;
+
+    mv    *= 2;                                 // back through the divider
+    bat_mv = bat_mv ? (bat_mv * 3 + mv) / 4 : mv;
+
+    const int pct = (bat_mv - BAT_EMPTY_MV) * 100 / (BAT_FULL_MV - BAT_EMPTY_MV);
+    return pct < 0 ? 0 : pct > 100 ? 100 : pct;
+}
+
 // ---------------------------------------------------------------------------
 static lv_obj_t *make_arc(int16_t start, int16_t end, bool reverse, uint32_t colour)
 {
@@ -899,6 +959,20 @@ static void tick_cb(lv_timer_t *timer)
         pulse_set(i, low);
     }
 
+    if (!bat_at || lv_tick_elaps(bat_at) >= BAT_EVERY_MS) {
+        const bool first = !bat_at;
+        bat_at = lv_tick_get();
+        if (!bat_at) bat_at = 1;
+        const int pct = battery_pct();
+        if (first) ESP_LOGI(TAG, "cell at %d%%, %d mV", pct, bat_mv);
+        if (pct >= 0) {
+            lv_arc_set_value(bat_arc, pct);
+            lv_obj_set_style_arc_color(bat_arc,
+                                       lv_color_hex(pct < BAT_LOW ? COL_ALERT : COL_FUR),
+                                       LV_PART_INDICATOR);
+        }
+    }
+
     flies_set(pet_flies(&pet));
 
     if (action_start && action_kind == ACT_FEED) {
@@ -969,6 +1043,14 @@ void user_ui_init(void)
         make_notch(&meters[i]);
         make_label(meters[i].label, meters[i].label_x, meters[i].label_y, meters[i].colour);
     }
+
+    // The board's own gauge, on the rim the three needs leave empty. It wears
+    // the fur colour rather than one of the three, and it carries no notch:
+    // nothing here asks the child to act, it tells the adult when to charge.
+    bat_arc = make_arc(BAT_ARC_START, BAT_ARC_END, true, COL_FUR);
+    lv_arc_set_value(bat_arc, 0);
+    make_label("BAT", BAT_LABEL_X, BAT_LABEL_Y, COL_FUR);
+    battery_init();
 
     pet_img = lv_image_create(scr);
     lv_image_set_src(pet_img, &sprite_dsc[pet.stage][SPR_IDLE_A]);

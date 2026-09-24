@@ -76,9 +76,14 @@ moment, so a child sees where the cost went. After thirty taps the bunny naps
 for a minute, shuts its eyes, shows a ZzZz beside its head and takes no orders
 until it wakes.
 
-Apart from the ZzZz over a sleeping bunny, the three gauge words and the
-restart question are the only text on the screen, and both are aimed at the
-adult rather than the child.
+A fourth gauge sits on the rim below the bunny, in the fur colour rather than
+one of the three, with BAT written at its left end. That one is the board's own
+battery, and it is the only thing on the screen the child is not asked to
+answer: it turns red below 20, which means an adult must charge it.
+
+Apart from the ZzZz over a sleeping bunny, the four gauge words and the
+restart question are the only text on the screen, and all of them are aimed at
+the adult rather than the child.
 
 ## Growth
 
