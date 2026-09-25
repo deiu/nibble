@@ -192,23 +192,20 @@ static float          since_save;
 static uint8_t        backlight = BRIGHT;
 
 // ---------------------------------------------------------------------------
-// Sprites. The ASCII art is expanded once into 8-bit alpha masks at full size.
-// ponytail: whole pixels cost PSRAM and remove every scaling question. All
-// three stages are built at boot, so growing costs nothing at the moment it
-// happens. Three stages of eight frames is about 1.5 MB of the 8 MB PSRAM.
-static bool mask_from_art(lv_image_dsc_t *d, const char *const *art,
-                          int w, int h, int scale)
+// Sprites. Each frame is a list of shapes (see art.h), rasterised once at boot
+// into an 8-bit alpha mask at the size it is shown, with anti-aliased edges.
+// The art has no resolution of its own, so the bunny is as smooth as the panel
+// allows rather than a grid of 9 px blocks.
+// ponytail: masks cost PSRAM and remove every scaling question at draw time.
+// All three stages are built at boot, so growing costs nothing at the moment
+// it happens. Three stages of eight frames is about 2 MB of the 8 MB PSRAM.
+static bool mask_from_art(lv_image_dsc_t *d, const art_t *art, int w, int h, int scale)
 {
     int      out_w = w * scale, out_h = h * scale;
     uint8_t *mask  = (uint8_t *) heap_caps_calloc(1, (size_t) out_w * out_h, MALLOC_CAP_SPIRAM);
     if (!mask) return false;
 
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++) {
-            if (art[y][x] != '#') continue;
-            for (int by = 0; by < scale; by++)
-                memset(mask + (y * scale + by) * out_w + x * scale, 0xFF, scale);
-        }
+    art_render(mask, out_w, out_h, art, (float) scale);
 
     memset(d, 0, sizeof(*d));
 #ifdef LV_IMAGE_HEADER_MAGIC
@@ -227,22 +224,25 @@ static bool mask_from_art(lv_image_dsc_t *d, const char *const *art,
 // freely, so a half-filled table is worse than no bunny at all.
 static bool sprites_load(void)
 {
+    const int64_t began = esp_timer_get_time();
+
     for (int s = 0; s < STAGE_COUNT; s++)
         for (int f = 0; f < SPR_COUNT; f++)
-            if (!mask_from_art(&sprite_dsc[s][f], SPRITES[s][f], SPRITE_W, SPRITE_H, SCALE)) {
+            if (!mask_from_art(&sprite_dsc[s][f], &SPRITES[s][f], SPRITE_W, SPRITE_H, SCALE)) {
                 ESP_LOGE(TAG, "no PSRAM for stage %d frame %d", s, f);
                 return false;
             }
     for (int i = 0; i < ICON_COUNT; i++) {
-        if (!mask_from_art(&icon_dsc[i], ICONS[i], ICON_W, ICON_H, ICON_SCALE)) {
+        if (!mask_from_art(&icon_dsc[i], &ICONS[i], ICON_W, ICON_H, ICON_SCALE)) {
             ESP_LOGE(TAG, "no PSRAM for icon %d", i);
             return false;
         }
-        if (!mask_from_art(&drop_dsc[i], ICONS[i], ICON_W, ICON_H, DROP_SCALE)) {
+        if (!mask_from_art(&drop_dsc[i], &ICONS[i], ICON_W, ICON_H, DROP_SCALE)) {
             ESP_LOGE(TAG, "no PSRAM for small icon %d", i);
             return false;
         }
     }
+    ESP_LOGI(TAG, "art drawn in %d ms", (int) ((esp_timer_get_time() - began) / 1000));
     return true;
 }
 

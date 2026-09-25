@@ -1,9 +1,9 @@
 """Draws docs/screens.png: the screen as it looks on the board, without a board.
 
-Nothing here is hand drawn. The art comes out of sprites.h and the geometry out
-of user_app.cpp, so a layout change shows up in the picture. Anything moved in
-one has to be moved in the other, which is the price of not needing hardware to
-see a change.
+Nothing here is hand drawn. The art comes out of gen_sprites.py, rasterised at
+the size the board rasterises it, and the geometry out of user_app.cpp, so a
+layout change shows up in the picture. Anything moved in one has to be moved in
+the other, which is the price of not needing hardware to see a change.
 
     python3 tools/mock_screen.py [out.png]
 
@@ -11,25 +11,17 @@ Needs Pillow, and the system python3 rather than the ESP-IDF one.
 """
 import math
 import os
-import re
 import sys
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ART = open(os.path.join(HERE, 'components/user_app/sprites.h')).read()
+sys.path.insert(0, os.path.join(HERE, 'tools'))
+import gen_sprites as art                       # the shapes, and the same rasteriser
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'docs/screens.png')
 
-# --- the art, one character per pixel, straight out of sprites.h ------------
-def grid(block, w):
-    return re.findall(r'"([.#]{%d})"' % w, block)
-
-SPR = {}
-for s in re.finditer(r'\[STAGE_(\w+)\] = \{(.*?)\n    \},', ART, re.S):
-    for f in re.finditer(r'\[SPR_(\w+)\] = \{(.*?)\n        \},', s.group(2), re.S):
-        SPR[(s.group(1), f.group(1))] = grid(f.group(2), 32)
-ICON = {m.group(1): grid(m.group(2), 16)
-        for m in re.finditer(r'\n    \[ICON_(\w+)\] = \{(.*?)\n    \},',
-                             ART[ART.index('ICONS['):], re.S)}
+SPR = {(st[0], name): shapes for st in art.STAGES
+       for name, shapes in art.build(st).items()}
+ICON = dict(art.ICONS)
 
 # --- the numbers, all of them from user_app.cpp and pet.h -------------------
 K = 3                                       # supersample, thrown away at the end
@@ -51,14 +43,17 @@ ZZZ_AT = {'BABY': (23, 11), 'YOUNG': (23, 4), 'ADULT': (25, 5)}
 FLY_AT = [(-140, -20), (140, -55), (-150, 60)]
 FONT = '/System/Library/Fonts/Supplemental/Arial Bold.ttf'   # stands in for Montserrat
 
-def art(d, rows, cell, cx, cy, colour):
-    h, w = len(rows), len(rows[0])
-    x0, y0 = cx - w * cell / 2, cy - h * cell / 2
-    for r, row in enumerate(rows):
-        for c, ch in enumerate(row):
-            if ch == '#':
-                d.rectangle([x0 + c * cell, y0 + r * cell,
-                             x0 + (c + 1) * cell - 1, y0 + (r + 1) * cell - 1], fill=colour)
+# The art is rasterised once per size at the board's own scale, then blown up
+# by K with no smoothing, so the picture shows the pixels the panel shows.
+_CACHE = {}
+def draw_art(img, shapes, units, scale, cx, cy, colour):
+    key = (tuple(shapes), scale)
+    if key not in _CACHE:
+        n = int(units * scale)
+        _CACHE[key] = Image.frombytes('L', (n, n), bytes(art.coverage(shapes, units, units, scale)))
+    m = _CACHE[key].resize((_CACHE[key].width * K,) * 2, Image.NEAREST)
+    patch = Image.new('RGB', m.size, colour)
+    img.paste(patch, (int(cx - m.width / 2), int(cy - m.height / 2)), m)
 
 def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ball=False,
            bat=70):
@@ -94,22 +89,22 @@ def device(stage, frame, food, fun, tidy, buttons=True, paid=None, zzz=False, ba
            font=label_font, fill=FUR, anchor='mm')
 
     for at in FLY_AT[:min(3, max(0, int((100 - tidy) / 25)))]:
-        art(d, ICON['FLY'], 2 * K, (C + at[0]) * K, (C + at[1]) * K, FLY)
+        draw_art(img, ICON['FLY'], 16, 2, (C + at[0]) * K, (C + at[1]) * K, FLY)
 
-    art(d, SPR[(stage, frame)], SCALE * K, C * K, (C + PET_DY) * K, FUR)
+    draw_art(img, SPR[(stage, frame)], 32, SCALE, C * K, (C + PET_DY) * K, FUR)
 
     if zzz:
         x, y = ZZZ_AT[stage]
         d.text(((C - 144 + x * SCALE) * K, (C + PET_DY - 144 + y * SCALE) * K),
                'ZzZz', font=ImageFont.truetype(FONT, 24 * K), fill=FUR, anchor='la')
     if ball:
-        art(d, ICON['BALL'], 4 * K, (C + 126) * K, (C + 58) * K, METERS[1][3])
+        draw_art(img, ICON['BALL'], 16, 4, (C + 126) * K, (C + 58) * K, METERS[1][3])
     if buttons:
         for (bx, by, icon, mi) in BUTTONS:
             d.rounded_rectangle([(C + bx - 46) * K, (C + by - 38) * K,
                                  (C + bx + 46) * K, (C + by + 38) * K],
                                 radius=38 * K, fill='#232327', outline=METERS[mi][3], width=3 * K)
-            art(d, ICON[icon], 4 * K, (C + bx) * K, (C + by) * K, METERS[mi][3])
+            draw_art(img, ICON[icon], 16, 4, (C + bx) * K, (C + by) * K, METERS[mi][3])
 
     # the glass is round, so the corners go, and the case goes around it
     mask = Image.new('L', img.size, 0)

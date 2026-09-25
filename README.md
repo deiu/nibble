@@ -18,20 +18,21 @@ holding it.
     . ~/esp/esp-idf/export.sh
     idf.py build flash monitor
 
-## Test the bunny logic on the Mac
+## Test the bunny logic and the art on the Mac
 
     ./test.sh
 
-`pet.c` has no LVGL and no ESP headers, so it compiles on the host. The
-self-check runs in a second and fails if the decay, the actions, the nap or
-the clamps break.
+`pet.c` and `art.c` have no LVGL and no ESP headers, so they compile on the
+host. The self-check runs in a second and fails if the decay, the actions, the
+nap, the clamps or the drawing of a shape break.
 
 ## Where things are
 
 | File | Holds |
 |---|---|
 | `components/user_app/pet.c` | the state machine and all tuning numbers |
-| `components/user_app/sprites.h` | the art, as ASCII, one character per pixel |
+| `components/user_app/sprites.h` | the art, as shapes: ellipses and tapered strokes |
+| `components/user_app/art.c` | draws those shapes into smooth masks, at any size |
 | `tools/gen_sprites.py` | builds `sprites.h`; edit a stage here, not by hand |
 | `components/user_app/user_app.cpp` | screen layout and the one timer |
 | `main/user_config.h` | the board pin map, from the Waveshare example |
@@ -45,17 +46,29 @@ example, unchanged.
     python3 tools/gen_sprites.py            # rewrites sprites.h
     python3 tools/gen_sprites.py BABY YOUNG # also prints those stages to the terminal
 
+The rabbit has no resolution of its own. A frame is a list of two primitives in
+a 32 by 32 unit square, an ellipse (sheared sideways, which is how an ear
+leans) and a capsule with a radius at each end (a carrot, a whisker, a stroke
+of the mouth), each one added to the fur or cut out of it, in order.
+
+`art.c` turns a list into an 8 bit coverage mask at whatever size is asked for:
+a pixel half inside the edge is half lit, so the curve of an ear lands where it
+really falls instead of on the nearest of 32 columns. The panel is 466 px and
+the bunny is 288 of them, so the difference between that and one character per
+pixel is the whole point of the screen. It costs half a second at boot, once,
+and nothing afterwards.
+
 Every feature of the rabbit is placed from its body ellipse, so a growth stage
 is only a body size and an ear size. The `STAGES` table at the top holds all
-three. Single pixels in `sprites.h` can still be edited by hand, but the
-generator overwrites them.
+three.
 
 ## The screen, without a board
 
     /usr/bin/python3 tools/mock_screen.py   # rewrites docs/screens.png
 
 The picture at the top is drawn, not photographed. The rabbit comes from
-`sprites.h` and every number comes from `user_app.cpp`: the gauge angles, the
+`gen_sprites.py`, rasterised at the size the board rasterises it, and every
+number comes from `user_app.cpp`: the gauge angles, the
 band width, the notch at 30, the scale of the art and where each thing sits.
 Move something on the screen and move it here, then look at the result before
 reaching for the USB cable. Needs Pillow, and the system python3 rather than

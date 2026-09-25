@@ -35,16 +35,23 @@ boot lines, reset the board first:
 
     ./test.sh
 
-It compiles `pet.c` with `-DPET_TEST` and runs the asserts in it. It takes a
-second, so run it after every change to the state machine. `pet.c` includes no
-LVGL and no ESP header, and it has to stay that way for this to work. Any
-change to the rules gets one more assert in the same block.
+It compiles `pet.c` with `-DPET_TEST` and `art.c` with `-DART_TEST` and runs
+the asserts in them: the state machine, then the rasteriser. It takes a second,
+so run it after every change to either. Neither file includes LVGL or an ESP
+header, and both have to stay that way for this to work. Any change to the
+rules gets one more assert in the same block.
 
 ## Things that bite
 
-- **`sprites.h` is generated.** Edit `tools/gen_sprites.py`, run
-  `python3 tools/gen_sprites.py`, then check `git diff sprites.h` is what you
-  meant. A hand edit survives until the next run of the generator.
+- **`sprites.h` is generated, and it holds shapes rather than pixels.** Edit
+  the geometry in `tools/gen_sprites.py`, run `python3 tools/gen_sprites.py`,
+  then check `git diff sprites.h` is what you meant. There is nothing to edit
+  by hand in it: a coordinate there is one number of a float six-tuple.
+- **Two rasterisers draw the same shapes**, `art.c` on the board and
+  `coverage()` in `gen_sprites.py` for the mock screen and the terminal
+  preview. They agree to within one step of alpha. Change the arithmetic in one
+  and change it in the other, or the picture in README.md stops matching the
+  panel. `./test.sh` covers the C one.
 - **`sdkconfig` is not in git.** Options that have to last go in
   `sdkconfig.defaults`, on their own line: a comment after a value is read as
   part of the value.
@@ -53,9 +60,9 @@ change to the rules gets one more assert in the same block.
   into the new field as garbage, so guard new fields in `pet_tick`, where a
   bad value costs nothing. Change the size and every saved rabbit is dropped.
 - **The screen is round, 466 px.** The centre is (233, 233) and the gauge band
-  starts at radius 210, so nothing of your own may reach that far. The 32x32
-  art is drawn at `SCALE` 9, centred at y -24: sprite pixel (col, row) is
-  screen (89 + 9*col, 65 + 9*row). A child of `pet_img` is clipped to that
+  starts at radius 210, so nothing of your own may reach that far. The art's
+  32x32 unit square is drawn at `SCALE` 9 px per unit, centred at y -24: art
+  unit (col, row) is screen (89 + 9*col, 65 + 9*row). A child of `pet_img` is clipped to that
   288 px box, and it moves with the bob, the hop and the shiver.
 - **`docs/screens.png` is generated too**, by `tools/mock_screen.py`, which
   copies the layout numbers out of `user_app.cpp`. Move something on the
