@@ -57,12 +57,15 @@ def arc(s, p0, p1, p2, r, n=8, cut=1):
 NOTCH = 2.0 / 9.0
 
 # The mouth is the same size at every growth stage, in art units rather than in
-# fractions of the body. A kit's body is two thirds of an adult's, and a smile
+# fractions of the body. A kit's body is two thirds of an adult's, and a mouth
 # scaled down with it is a line nobody reads from across the room. Young animals
 # wear their features large anyway, which is most of what makes them look young.
-MOUTH_W, MOUTH_LIFT, MOUTH_DIP = 4.8, 2.5, 3.4    # half width, tip rise, mid fall
-MOUTH_R = 0.47                                    # the stroke, about 8 px at SCALE 9
-FLAT_W  = 2.4                                     # the bored mouth is a short line
+# One shape serves both faces: the ends go up and the middle down for a smile,
+# and the other way round for a frown.
+MOUTH_W   = 3.5                                 # half the width of the mouth
+MOUTH_END = 1.6                                 # how far the ends sit off the line
+MOUTH_MID = 2.4                                 # and the middle, the other way
+MOUTH_R   = 0.42                                # the stroke, about 7 px at SCALE 9
 
 # --- rasteriser, the same arithmetic as art.c --------------------------------
 def _sd_ell(x, y, cx, cy, rx, ry, lean):
@@ -198,19 +201,24 @@ class Body:
                               self.rx * 0.012, cut=1))
 
     def mouth_smile(self, s, dy=0.0):
-        """The resting face, and it smiles. One wide arc with both ends well
-        above the middle: the two small lobes of a rabbit "w" are the prettier
-        mouth, but at arm's length they read as a squiggle, and a child has to
-        see at a glance that the bunny is content. The philtrum drops onto the
-        middle of it, which is what keeps the face a rabbit's."""
+        """The resting face, and it smiles. One arc with both ends above the
+        middle: the two small lobes of a rabbit "w" are the prettier mouth, but
+        at arm's length they read as a squiggle, and a child has to see at a
+        glance that the bunny is content. The philtrum drops onto the middle of
+        it, which is what keeps the face a rabbit's."""
         y = self.mouth_y + dy
-        arc(s, (self.cx - MOUTH_W, y - MOUTH_LIFT),     # left tip, high
-               (self.cx,           y + MOUTH_DIP),      # pulls the middle down
-               (self.cx + MOUTH_W, y - MOUTH_LIFT), MOUTH_R)        # right tip
+        arc(s, (self.cx - MOUTH_W, y - MOUTH_END),      # left end, up
+               (self.cx,           y + MOUTH_MID),      # pulls the middle down
+               (self.cx + MOUTH_W, y - MOUTH_END), MOUTH_R)
 
-    def mouth_flat(self, s, dy=0.0):             # bored: a straight line, and as
-        y = self.mouth_y + dy + self.ry * 0.06   # readable as the smile it is not
-        s.append(BAR(self.cx - FLAT_W, self.cx + FLAT_W, y, MOUTH_R, cut=1))
+    def mouth_frown(self, s, dy=0.0):
+        """Every face that wants something. The same arc turned over: a mouth
+        that is merely open reads as surprise, and surprise is not what a bunny
+        with an empty gauge is asking for."""
+        y = self.mouth_y + dy
+        arc(s, (self.cx - MOUTH_W, y + MOUTH_END),      # left end, down
+               (self.cx,           y - MOUTH_MID),      # and the middle lifted
+               (self.cx + MOUTH_W, y + MOUTH_END), MOUTH_R)
 
     def mouth_open(self, s, dy=0.0):
         y = self.mouth_y + dy + self.ry * 0.16
@@ -239,12 +247,12 @@ def build(stage):
     # No Z in the art: the screen draws a ZzZz label beside the head, which can
     # follow each stage's ears in a way five fixed pixels cannot.
     s = b.draw(ears='down'); b.eyes(s, shut=True); b.nose(s);    b.whiskers(s); b.mouth_smile(s);       f['SLEEP'] = s
-    # Hungry: ears forward and up, mouth open, eyes wide.
-    s = b.draw(ears='up');   b.eyes(s);            b.nose(s);    b.whiskers(s); b.mouth_open(s);    f['HUNGRY'] = s
-    # Bored: ears flopped, a flat mouth, eyes looking to one side.
-    s = b.draw(ears='down'); b.eyes(s, dx=1.2);    b.nose(s);    b.whiskers(s); b.mouth_flat(s);    f['BORED'] = s
+    # Hungry: ears forward and up, eyes wide, and unhappy about it.
+    s = b.draw(ears='up');   b.eyes(s);            b.nose(s);    b.whiskers(s); b.mouth_frown(s);   f['HUNGRY'] = s
+    # Bored: ears flopped, eyes looking to one side.
+    s = b.draw(ears='down'); b.eyes(s, dx=1.2);    b.nose(s);    b.whiskers(s); b.mouth_frown(s);   f['BORED'] = s
     # Dirty: eyes screwed shut, specks of dirt in the fur.
-    s = b.draw();            b.eyes(s, shut=True); b.nose(s);    b.whiskers(s); b.mouth_flat(s); b.specks(s); f['DIRTY'] = s
+    s = b.draw();            b.eyes(s, shut=True); b.nose(s);    b.whiskers(s); b.mouth_frown(s); b.specks(s); f['DIRTY'] = s
     return f
 
 # --- want icons, in a 16x16 square -------------------------------------------
