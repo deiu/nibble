@@ -4,6 +4,7 @@
 void Lvgl_PortInit(void);
 
 void Lcd_SetBacklight(uint8_t brig);
+void Lcd_Sleep(bool sleep);
 
 bool lvgl_lock(int timeout_ms);
 void lvgl_unlock(void);

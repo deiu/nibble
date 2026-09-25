@@ -129,6 +129,47 @@ that a night off does not ruin the bunny. For a calmer, adult Tamagotchi pace,
 divide the three rates by ten. `SIDE_COST` sets what every answer costs on the
 next gauge, and `SLEEP_AFTER` how many taps buy a nap.
 
+## Sleep and power
+
+Untouched, the screen dims at 30 seconds and goes at 60. Going means the panel
+itself, not only its emitters: brightness 0 leaves the controller scanning a
+black frame, so the firmware sends the display to sleep as well. From there the
+chip light sleeps between touches, in three second slices, and the touch chip
+keeps scanning on its own: a finger pulls its interrupt line low and the board
+is back in about a quarter of a second, with the screen as it was.
+
+Five dark minutes later the board opens the latch that holds its own power and
+switches off. The way back is then the PWR button, which closes the latch while
+it is held, long enough for the firmware to take over the pin. The bunny is
+saved before the power goes, and it is frozen until somebody comes back, which
+is what this Tamagotchi does anyway when it is not powered.
+
+None of the sleeping and none of the switching off happens with a USB host
+attached: light sleep drops the USB device, a board that cannot be reached
+cannot be flashed, and the latch does nothing while the cable holds the rail.
+On a cell there is no host, which is exactly when it matters.
+
+Idle with the screen dark, before this, the board drew about 27 mA, which is
+about 35 hours on a 1000 mAh cell. Lit, it draws four to six times that.
+
+## Measuring the cell
+
+Nothing on this board measures current, and a USB cable measures the charger
+rather than the cell, so the instrument is the cell's own voltage against time.
+The firmware writes a point into NVS as it runs and prints the whole run as CSV
+at the next boot, when a host is on the USB port.
+
+    (unplug the USB and leave the bunny alone, as long as you can spare)
+    (plug the USB back in, then:)
+    . ~/esp/esp-idf/export.sh
+    esptool.py -p /dev/cu.usbmodem11301 --after hard_reset flash_id >/dev/null; ./serial.sh 8
+
+Every line is `minute,mv,lit`. `lit` is 1 when the screen was on for that
+point, so a run somebody picked up halfway is easy to tell from one left alone,
+and the last line of the dump gives the fall in mV an hour. The ring holds 256
+points: when it fills, every second point goes and the interval doubles, so a
+run of any length fits in the same kilobyte and only detail is ever lost.
+
 ## Not built yet
 
 - Wi-Fi and NTP. The board has no RTC, so time only passes while it is
@@ -138,6 +179,7 @@ next gauge, and `SLEEP_AFTER` how many taps buy a nap.
   set of drawing functions and a selector.
 - Death.
 - A tap game behind PLAY.
-- Running on a battery. The cell header works, but GPIO18 is the power latch
-  and this firmware never drives it, so the board drops as soon as the PWR
-  button is released. See the vendor's 04_BATT_PWR_Test.
+- Battery life while the bunny is actually in use. The board sleeps and
+  switches itself off now, so what is left is the lit screen, at four to six
+  times the idle draw: `BRIGHT` is 255, the maximum, and the CPU runs at
+  160 MHz with the power management of ESP-IDF switched off.

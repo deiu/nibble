@@ -69,6 +69,29 @@ rules gets one more assert in the same block.
   screen and move it there as well, or the picture in README.md starts to lie.
   It runs on the system python3 with Pillow, not on the ESP-IDF python.
 - **LVGL 9 names.** `lv_obj_remove_flag`, not `lv_obj_clear_flag`.
+- **The board never sleeps and never switches off with a USB host attached.**
+  `nap()` returns at once when `usb_serial_jtag_is_connected()`, because light
+  sleep drops the USB device and takes the flash path with it. So the whole
+  power path can only be tested on the cell, and the cell log is how you read
+  the result afterwards. The panel sleep at 60 seconds is not guarded and can
+  be watched on the desk: the screen goes truly black and a tap brings it back.
+
+## Measuring the cell
+
+README.md says how to run a discharge test. Three things about the log itself:
+
+- **It prints only with a USB host attached.** On the cell there is nobody to
+  read it, and a console with no host costs milliseconds a line.
+- **It reaches NVS every 5 minutes**, and every minute once the cell is under
+  3500 mV, so the last few minutes of a run that ended in a brown-out can be
+  missing. The shape survives; the very last point may not.
+- **It is never cleared.** A restart shows up as the minute column starting
+  again, and the dump marks it. The summary at the end covers the last stretch
+  only.
+- **A run's first point comes one interval after boot, not at boot.** A dead
+  cell takes the board through a reset every few seconds, and a point on each
+  of those would fill the ring with nothing and decimate the night away. Only
+  an empty log starts at minute 0.
 
 ## Commits
 

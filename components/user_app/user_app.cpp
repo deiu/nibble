@@ -7,6 +7,8 @@
 #include <string.h>
 
 #include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
+#include "esp_sleep.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
@@ -56,7 +58,13 @@ LcdTouchPanel Custom_GetLcdTouchPanel(void) { return touch_dev; }
 #define ICON_PX_H       (ICON_H * ICON_SCALE)
 
 #define DIM_AFTER_MS    30000                  // AMOLED, so dark costs nothing
-#define OFF_AFTER_MS    60000
+#define OFF_AFTER_MS    60000                  // a minute untouched and the screen
+                                               // goes, panel and all, and the chip
+                                               // sleeps between touches
+#define DOWN_AFTER_MS   (5 * 60 * 1000)        // five minutes dark and the board
+                                               // opens its own power latch
+#define NAP_CHUNK_US    3000000                // one sleep, shorter than the task
+                                               // watchdog's patience
 #define BRIGHT          255
 #define DIM             25
 #define OFF             0
@@ -190,6 +198,10 @@ static pet_stage_t    shown_stage = STAGE_COUNT;
 static pet_stage_t    noted_stage = STAGE_COUNT;   // last stage we celebrated
 static float          since_save;
 static uint8_t        backlight = BRIGHT;
+static int64_t        dark_us;                 // when the screen went dark, 0 if lit
+static bool           latch_open;              // the board has asked to switch off
+static bool           panel_asleep;            // the controller, not just the emitters
+static bool           dark_settled;            // one pass since the screen went dark
 
 // ---------------------------------------------------------------------------
 // Sprites. Each frame is a list of shapes (see art.h), rasterised once at boot
@@ -596,6 +608,18 @@ static void screen_set_light(uint8_t level)
     if (level == OFF) state_save();             // the child has put it down: the
                                                 // best moment to survive a power cut
     if (backlight == OFF && level != OFF) {
+        dark_us      = 0;                       // the countdown to switching off
+        dark_settled = false;
+        bat_at       = 0;                       // the arc has not moved all night
+        if (panel_asleep) {
+            Lcd_Sleep(false);                   // the panel, not only its emitters
+            panel_asleep = false;
+            lv_obj_invalidate(lv_screen_active());   // a panel that slept may have
+        }                                            // lost the frame it held
+        if (latch_open) {                       // somebody came back to a board whose
+            gpio_set_level((gpio_num_t) SYS_POWER_IO_PIN, 1);   // rail only USB or a
+            latch_open = false;                 // charger is still holding up
+        }
         // The first touch only wakes the screen. A child must not feed the
         // bunny by accident just by picking the device up.
         lv_indev_wait_release(lv_indev_get_next(NULL));
@@ -603,6 +627,10 @@ static void screen_set_light(uint8_t level)
     }
     if (level == OFF) lv_anim_delete(pet_img, set_lift);
     Lcd_SetBacklight(level);
+    if (level == OFF) {
+        dark_us = esp_timer_get_time();
+        if (!dark_us) dark_us = 1;
+    }
     backlight = level;
 }
 
@@ -778,6 +806,170 @@ static int battery_pct(void)
 }
 
 // ---------------------------------------------------------------------------
+// The discharge log, which is the only instrument this board has. Nothing on
+// it measures current, and a cable measures the charger rather than the cell,
+// so what is left is the cell's own voltage against time. Unplug, leave the
+// bunny alone, plug back in: the log of the run is printed at the next boot,
+// as CSV to paste anywhere.
+//
+// The ring cannot overflow. When it fills, every second point goes and the
+// interval doubles, so a run of any length lands in the same kilobyte and the
+// first thing lost is detail, never the shape.
+#define BAT_LOG_MAX     256                     // 1 KB of the 24 KB NVS partition
+#define BAT_LOG_LIT     0x8000                  // this point was taken with the
+                                                // screen lit, so it is not an idle
+                                                // number
+#define BAT_LOG_SAVE    5                       // minutes between NVS writes
+#define BAT_LOG_ENDGAME 3500                    // under this every point counts, so
+                                                // write each one
+#define BAT_LOG_RUN_MIN 10                      // a rate under this is ADC noise
+#define BAT_LOG_EVERY_MAX 1024                  // a ceiling on the doubling, so the
+                                                // interval cannot wrap a uint16
+
+typedef struct {
+    uint16_t every;                             // minutes between points
+    uint16_t n;
+    struct { uint16_t min, mv; } p[BAT_LOG_MAX];
+} bat_log_t;
+
+static bat_log_t bat_log;
+static uint32_t  bat_log_next;                  // uptime minute of the next point
+static uint32_t  bat_log_saved = UINT32_MAX;    // nothing written this run yet
+
+static void bat_log_write(void)
+{
+    if (!nvs_h) return;
+    if (nvs_set_blob(nvs_h, "batlog", &bat_log, sizeof(bat_log)) != ESP_OK
+        || nvs_commit(nvs_h) != ESP_OK)
+        ESP_LOGW(TAG, "the cell log did not reach NVS");
+}
+
+// Printed only with a host on the other end of the USB port. On the cell there
+// is nobody to read it, and a console with no host costs milliseconds a line.
+static void bat_log_dump(void)
+{
+    if (!bat_log.n || !usb_serial_jtag_is_connected()) return;
+
+    printf("\n# nibble cell log: %u point%s, %u min apart\n",
+           (unsigned) bat_log.n, bat_log.n == 1 ? "" : "s", (unsigned) bat_log.every);
+    printf("# minute,mv,lit\n");
+    uint16_t run_at = 0, run_mv = 0;
+    for (uint16_t i = 0; i < bat_log.n; i++) {
+        const uint16_t mv = bat_log.p[i].mv & (uint16_t) ~BAT_LOG_LIT;
+        if (i && bat_log.p[i].min <= bat_log.p[i - 1].min) {   // never equal in one run
+            printf("# the board restarted here, so the minutes start again\n");
+            run_at = bat_log.p[i].min;
+            run_mv = mv;
+        } else if (!i) {
+            run_at = bat_log.p[i].min;
+            run_mv = mv;
+        }
+        printf("%u,%u,%u\n", (unsigned) bat_log.p[i].min, (unsigned) mv,
+               (bat_log.p[i].mv & BAT_LOG_LIT) ? 1u : 0u);
+    }
+    // The run still going is the one worth summing up, so the last stretch
+    // between restarts is the one measured.
+    const uint16_t last    = bat_log.p[bat_log.n - 1].min;
+    const uint16_t last_mv = bat_log.p[bat_log.n - 1].mv & (uint16_t) ~BAT_LOG_LIT;
+    const int      mins    = last - run_at;
+    if (mins >= BAT_LOG_RUN_MIN && run_mv > last_mv)
+        printf("# last run: %d h %02d min, %u mV to %u mV, %d mV an hour\n",
+               mins / 60, mins % 60, (unsigned) run_mv, (unsigned) last_mv,
+               (run_mv - last_mv) * 60 / mins);
+    else if (mins >= BAT_LOG_RUN_MIN)
+        printf("# last run: %d h %02d min, %u mV to %u mV, not falling (on the charger)\n",
+               mins / 60, mins % 60, (unsigned) run_mv, (unsigned) last_mv);
+    fflush(stdout);
+}
+
+static void bat_log_load(void)
+{
+    size_t len = sizeof(bat_log);
+    if (!nvs_h || nvs_get_blob(nvs_h, "batlog", &bat_log, &len) != ESP_OK
+        || len != sizeof(bat_log) || bat_log.n > BAT_LOG_MAX
+        || bat_log.every == 0 || bat_log.every > BAT_LOG_EVERY_MAX) {
+        memset(&bat_log, 0, sizeof(bat_log));
+        bat_log.every = 1;
+    }
+    // A run that already holds points waits a whole interval before its first
+    // one. A cell that has just died takes the board through a reset every few
+    // seconds, and a point at minute 0 on every one of those would fill the
+    // ring with nothing, decimate the night away and write a kilobyte to NVS
+    // each time. Only an empty log starts at minute 0.
+    bat_log_next = bat_log.n ? bat_log.every : 0;
+    bat_log_dump();                             // the run that has just ended
+}
+
+// One point per interval, taken from the smoothed millivolts the gauge uses.
+static void bat_log_tick(void)
+{
+    const uint32_t up_min = (uint32_t) (esp_timer_get_time() / 60000000);
+    if (bat_log.n && up_min < bat_log_next) return;
+    if (bat_mv <= 0) return;
+
+    if (bat_log.n == BAT_LOG_MAX) {             // full: keep every second point
+        for (uint16_t i = 0; i < BAT_LOG_MAX / 2; i++) bat_log.p[i] = bat_log.p[i * 2];
+        bat_log.n = BAT_LOG_MAX / 2;
+        if (bat_log.every < BAT_LOG_EVERY_MAX) bat_log.every = bat_log.every * 2;
+    }
+    bat_log.p[bat_log.n].min = (uint16_t) up_min;
+    bat_log.p[bat_log.n].mv  = (uint16_t) bat_mv | (backlight != OFF ? BAT_LOG_LIT : 0);
+    bat_log.n++;
+    bat_log_next = up_min + bat_log.every;
+
+    const uint32_t due = bat_mv < BAT_LOG_ENDGAME ? 1 : BAT_LOG_SAVE;
+    if (bat_log_saved == UINT32_MAX || up_min - bat_log_saved >= due) {
+        bat_log_write();
+        bat_log_saved = up_min;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sleeping, and switching off. With the screen dark there is nothing to draw
+// and nobody to draw it for, so the chip stops between touches, and after five
+// dark minutes the board opens the latch that holds its own power. The touch
+// chip keeps scanning on its own and pulls its interrupt line low under a
+// finger, which is what brings the board back; after the latch is open it
+// takes the PWR button.
+//
+// None of this runs with a USB host attached. Light sleep drops the USB device
+// and a board that cannot be reached cannot be flashed, and the latch does
+// nothing anyway while the cable holds the rail. On a cell there is no host,
+// which is exactly when it matters.
+static void power_off(void)
+{
+    if (latch_open) return;
+    latch_open = true;
+    state_save();
+    bat_log_write();                            // the last thing this run knows
+    ESP_LOGI(TAG, "five dark minutes: the board switches itself off");
+    gpio_set_level((gpio_num_t) SYS_POWER_IO_PIN, 0);
+}
+
+// One slice of sleep, and then back to LVGL whatever woke us. LVGL is the only
+// thing that reads the touch chip, so a nap that held on to the processor until
+// the interrupt line moved would rest the whole five minutes on that one line
+// being right. It is not worth a bunny that cannot be woken: three seconds
+// awake for two milliseconds is cheap insurance, and it is also what looks for
+// a USB host again and takes the next point for the cell log.
+static void nap(void)
+{
+    if (!dark_us || usb_serial_jtag_is_connected()) return;
+
+    if (esp_timer_get_time() >= dark_us + (int64_t) DOWN_AFTER_MS * 1000) power_off();
+
+    esp_sleep_enable_timer_wakeup(NAP_CHUNK_US);
+    // The GPIO source rather than ext0: ext0 hands the pad to the RTC mux and
+    // never hands it back, which loses the pull-up that holds this line high
+    // and leaves gpio_get_level reading a pad it is no longer wired to.
+    gpio_wakeup_enable((gpio_num_t) TOUCH_INT_PIN, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+    esp_light_sleep_start();
+    vTaskDelay(pdMS_TO_TICKS(2));               // two ticks at 1000 Hz, so both idle
+                                                // tasks run and feed the watchdog
+}
+
+// ---------------------------------------------------------------------------
 static lv_obj_t *make_arc(int16_t start, int16_t end, bool reverse, uint32_t colour)
 {
     lv_obj_t *a = lv_arc_create(lv_screen_active());
@@ -925,6 +1117,25 @@ static void tick_cb(lv_timer_t *timer)
     uint32_t idle = lv_display_get_inactive_time(NULL);
     screen_set_light(idle > OFF_AFTER_MS ? OFF : (idle > DIM_AFTER_MS ? DIM : BRIGHT));
     if (confirm_start && lv_tick_elaps(confirm_start) >= CONFIRM_MS) confirm_hide();
+    // The cell, before anything that gives up on a dark screen. A board left
+    // alone is the state worth measuring, and it is the state where nothing
+    // else below this line runs. The gauge itself is only touched while the
+    // screen is lit: moving an arc nobody can see still costs a redraw.
+    if (!bat_at || lv_tick_elaps(bat_at) >= BAT_EVERY_MS) {
+        const bool first = !bat_at;
+        bat_at = lv_tick_get();
+        if (!bat_at) bat_at = 1;
+        const int pct = battery_pct();
+        if (first) ESP_LOGI(TAG, "cell at %d%%, %d mV", pct, bat_mv);
+        if (pct >= 0) bat_log_tick();           // a failed read is not a reading
+        if (pct >= 0 && backlight != OFF) {
+            lv_arc_set_value(bat_arc, pct);
+            lv_obj_set_style_arc_color(bat_arc,
+                                       lv_color_hex(pct < BAT_LOW ? COL_ALERT : COL_FUR),
+                                       LV_PART_INDICATOR);
+        }
+    }
+
     if (backlight == OFF) {
         // Nothing half-drawn survives the dark. Clearing action_start alone
         // left the prop behind, because the only code that hides a prop sits
@@ -937,6 +1148,20 @@ static void tick_cb(lv_timer_t *timer)
         lv_obj_add_flag(cheer_label, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(zzz_label, LV_OBJ_FLAG_HIDDEN);
         buttons_set(false);
+
+        // Hiding all of that invalidates the screen, and the refresh runs after
+        // this callback returns, so the panel is given one more pass before it
+        // stops listening. A flush into a sleeping controller is a write
+        // nobody can predict.
+        if (!dark_settled) {
+            dark_settled = true;
+            return;
+        }
+        if (!panel_asleep) {
+            Lcd_Sleep(true);
+            panel_asleep = true;
+        }
+        nap();                                  // and nothing else until a finger
         return;
     }
 
@@ -970,20 +1195,6 @@ static void tick_cb(lv_timer_t *timer)
     // a sleeping bunny takes no orders anyway.
     if (wants_help && !action_start && !confirm_start && !pet.asleep) buttons_set(true);
     else if (idle > BTN_SHOW_MS)                                      buttons_set(false);
-
-    if (!bat_at || lv_tick_elaps(bat_at) >= BAT_EVERY_MS) {
-        const bool first = !bat_at;
-        bat_at = lv_tick_get();
-        if (!bat_at) bat_at = 1;
-        const int pct = battery_pct();
-        if (first) ESP_LOGI(TAG, "cell at %d%%, %d mV", pct, bat_mv);
-        if (pct >= 0) {
-            lv_arc_set_value(bat_arc, pct);
-            lv_obj_set_style_arc_color(bat_arc,
-                                       lv_color_hex(pct < BAT_LOW ? COL_ALERT : COL_FUR),
-                                       LV_PART_INDICATOR);
-        }
-    }
 
     flies_set(pet_flies(&pet));
 
@@ -1030,6 +1241,7 @@ static void tick_cb(lv_timer_t *timer)
 void user_app_init(void)
 {
     state_load();
+    bat_log_load();
 }
 
 void user_ui_init(void)
@@ -1063,6 +1275,16 @@ void user_ui_init(void)
     lv_arc_set_value(bat_arc, 0);
     make_label("BAT", BAT_LABEL_X, BAT_LABEL_Y, COL_FUR);
     battery_init();
+
+    // The touch chip's interrupt line, which nothing read until now: it is what
+    // wakes the board out of a nap. Held up by the pull, pulled low by a finger.
+    gpio_config_t touch_int = {};
+    touch_int.pin_bit_mask = 1ULL << TOUCH_INT_PIN;
+    touch_int.mode         = GPIO_MODE_INPUT;
+    touch_int.pull_up_en   = GPIO_PULLUP_ENABLE;
+    gpio_config(&touch_int);
+    ESP_LOGI(TAG, "touch interrupt idles %s", gpio_get_level((gpio_num_t) TOUCH_INT_PIN)
+                                              ? "high" : "low, so naps end early");
 
     pet_img = lv_image_create(scr);
     lv_image_set_src(pet_img, &sprite_dsc[pet.stage][SPR_IDLE_A]);

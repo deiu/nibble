@@ -168,6 +168,33 @@ static void lvgl_port_task(void *arg) {
     }
 }
 
+// The panel itself, not only its emitters. Brightness 0 leaves the controller
+// scanning a black frame; 0x28 and 0x10 stop it. Waking takes the datasheet's
+// 120 ms, so the caller should redraw afterwards: sleep can lose the frame the
+// panel was holding.
+static void Lcd_Cmd(uint8_t cmd, const uint8_t *param, size_t n) {
+    esp_lcd_panel_io_tx_param(io_handle, (0x02u << 24) | ((uint32_t) cmd << 8), param, n);
+}
+
+void Lcd_Sleep(bool sleep) {
+    if (sleep) {
+        Lcd_Cmd(0x28, NULL, 0);                         // display off
+        vTaskDelay(pdMS_TO_TICKS(20));
+        Lcd_Cmd(0x10, NULL, 0);                         // sleep in
+        // The panel will not take a Sleep Out until 120 ms after this, and the
+        // wait belongs here rather than there: nobody notices it on the way
+        // down, and a tap that arrives 40 ms later must not be ignored.
+        vTaskDelay(pdMS_TO_TICKS(120));
+    } else {
+        Lcd_Cmd(0x11, NULL, 0);                         // sleep out
+        vTaskDelay(pdMS_TO_TICKS(120));
+        const uint8_t ctrl = 0x20, hbm = 0xFF;          // the two from the init list
+        Lcd_Cmd(0x53, &ctrl, 1);                        // that decide whether the
+        Lcd_Cmd(0x63, &hbm, 1);                         // brightness byte is obeyed
+        Lcd_Cmd(0x29, NULL, 0);                         // display on
+    }
+}
+
 void Lcd_SetBacklight(uint8_t brig) {
     uint32_t lcd_cmd = 0x51;
     lcd_cmd &= 0xff;
